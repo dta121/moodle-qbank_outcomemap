@@ -27,6 +27,7 @@ $string['privacy:metadata'] = 'The outcome mapping question bank plugin does not
 
 $string['outcomescolumn'] = 'Outcomes';
 $string['filtertitle'] = 'Outcome';
+$string['mappedfiltertitle'] = 'Has outcome mappings';
 $string['nomappings'] = 'No outcome mappings';
 $string['managemappings'] = 'Manage outcome mappings';
 $string['addmapping'] = 'Add draft mapping';

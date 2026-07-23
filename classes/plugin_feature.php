@@ -19,6 +19,7 @@ namespace qbank_outcomemap;
 use core_question\local\bank\plugin_features_base;
 use core_question\local\bank\view;
 use qbank_outcomemap\local\bank\bulk_map_action;
+use qbank_outcomemap\local\bank\mapped_condition;
 use qbank_outcomemap\local\bank\outcome_column;
 use qbank_outcomemap\local\bank\outcome_condition;
 use qbank_outcomemap\local\bank\outcome_map_action;
@@ -57,13 +58,13 @@ class plugin_feature extends plugin_features_base {
     }
 
     /**
-     * Return the outcome filter condition.
+     * Return the outcome and mapped-state filter conditions.
      *
      * @param view|null $qbank Question bank view when rendering the UI.
-     * @return outcome_condition[]
+     * @return \core_question\local\bank\condition[]
      */
     public function get_question_filters(?view $qbank = null): array {
-        return [new outcome_condition($qbank)];
+        return [new outcome_condition($qbank), new mapped_condition($qbank)];
     }
 
     /**

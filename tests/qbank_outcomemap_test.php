@@ -23,6 +23,7 @@ use local_outcomemap\local\service\framework_service;
 use local_outcomemap\local\service\outcome_service;
 use local_outcomemap\local\service\question_mapping_service;
 use qbank_outcomemap\local\bank\bulk_map_action;
+use qbank_outcomemap\local\bank\mapped_condition;
 use qbank_outcomemap\local\bank\outcome_column;
 use qbank_outcomemap\local\bank\outcome_condition;
 use qbank_outcomemap\local\bank\outcome_map_action;
@@ -127,8 +128,9 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $this->assertInstanceOf(outcome_map_action::class, $actions[0]);
 
         $filters = $feature->get_question_filters($view);
-        $this->assertCount(1, $filters);
+        $this->assertCount(2, $filters);
         $this->assertInstanceOf(outcome_condition::class, $filters[0]);
+        $this->assertInstanceOf(mapped_condition::class, $filters[1]);
 
         $bulk = $feature->get_bulk_actions($view);
         $this->assertCount(1, $bulk);
@@ -232,6 +234,20 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $this->assertNotContains((int) $question->id, $nomatch);
 
         $this->assertSame(['', []], outcome_condition::build_query_from_filter(['values' => []]));
+
+        // The yes/no mapped-state filter uses the same SQL scaffold.
+        $runmapped = function (array $filter) use ($DB): array {
+            [$where, $params] = mapped_condition::build_query_from_filter($filter);
+            $sql = 'SELECT q.id FROM {question} q
+                      JOIN {question_versions} qv ON qv.questionid = q.id';
+            if ($where !== '') {
+                $sql .= ' WHERE ' . $where;
+            }
+            return array_keys($DB->get_records_sql($sql, $params));
+        };
+        $this->assertContains((int) $question->id, $runmapped(['values' => [1]]));
+        $this->assertNotContains((int) $question->id, $runmapped(['values' => [0]]));
+        $this->assertSame(['', []], mapped_condition::build_query_from_filter(['values' => []]));
     }
 
     /**
