@@ -40,7 +40,7 @@ Feature: Question authors map governed outcomes to exact question versions
 
   Scenario: The outcome column shows unmapped questions and the editor creates a draft
     Given I log in as "admin"
-    And I navigate to "Plugins > Learning outcome mapping > Frameworks and outcomes" in site administration
+    And I navigate to "Learning outcome mapping > Frameworks and outcomes" in site administration
     And I click on "Add framework" "link"
     And I set the following fields to these values:
       | Code       | MBA614-FW       |
@@ -50,12 +50,12 @@ Feature: Question authors map governed outcomes to exact question versions
     And I click on "Submit for review" "link" in the "MBA614-FW" "table_row"
     And I log out
     And I log in as "reviewer"
-    And I navigate to "Plugins > Learning outcome mapping > Approval queue" in site administration
+    And I navigate to "Learning outcome mapping > Approval queue" in site administration
     And I click on "Approve" "link" in the "MBA614-FW" "table_row"
     And I press "Continue"
     And I log out
     And I log in as "admin"
-    And I navigate to "Plugins > Learning outcome mapping > Frameworks and outcomes" in site administration
+    And I navigate to "Learning outcome mapping > Frameworks and outcomes" in site administration
     And I click on "Add outcome" "link"
     And I set the following fields to these values:
       | Framework      | MBA614-FW                        |
@@ -66,7 +66,7 @@ Feature: Question authors map governed outcomes to exact question versions
     And I click on "Submit for review" "link" in the "CLO1" "table_row"
     And I log out
     And I log in as "reviewer"
-    And I navigate to "Plugins > Learning outcome mapping > Approval queue" in site administration
+    And I navigate to "Learning outcome mapping > Approval queue" in site administration
     And I click on "Approve" "link" in the "CLO1" "table_row"
     And I press "Continue"
     And I log out
@@ -93,7 +93,7 @@ Feature: Question authors map governed outcomes to exact question versions
     Then I should see "Mapping submitted for review."
     And I log out
     And I log in as "reviewer"
-    And I navigate to "Plugins > Learning outcome mapping > Approval queue" in site administration
+    And I navigate to "Learning outcome mapping > Approval queue" in site administration
     And I click on "Approve" "link" in the "MBA614-FW.CLO1 / alignment_only" "table_row"
     And I press "Continue"
     Then I should see "The record was approved."
