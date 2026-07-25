@@ -97,9 +97,19 @@ final class qbank_outcomemap_test extends \advanced_testcase {
     /**
      * Creates a course, question bank module, category, and one question.
      *
+     * The standalone question bank module arrived in Moodle 5.0. On the declared
+     * 4.5 minimum there is no mod_qbank to host a module-context question bank,
+     * so these fixtures cannot be built and the test is skipped rather than
+     * reported as a plugin failure.
+     *
      * @return array{0:\stdClass,1:\stdClass,2:\stdClass} Course, qbank, and question.
      */
     private function create_question_scope(): array {
+        if (!\core_component::get_plugin_directory('mod', 'qbank')) {
+            $this->markTestSkipped(
+                'Module-context question banks require mod_qbank, added in Moodle 5.0.'
+            );
+        }
         $course = $this->getDataGenerator()->create_course();
         $qbank = $this->getDataGenerator()->create_module('qbank', ['course' => $course->id]);
         $generator = $this->getDataGenerator()->get_plugin_generator('core_question');
