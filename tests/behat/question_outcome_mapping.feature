@@ -41,7 +41,7 @@ Feature: Question authors map governed outcomes to exact question versions
   Scenario: The outcome column shows unmapped questions and the editor creates a draft
     Given I log in as "admin"
     And I navigate to "Plugins > Learning outcome mapping > Frameworks and outcomes" in site administration
-    And I click on "Add framework" "button"
+    And I click on "Add framework" "link"
     And I set the following fields to these values:
       | Code       | MBA614-FW       |
       | Name       | MBA614 outcomes |
@@ -56,7 +56,7 @@ Feature: Question authors map governed outcomes to exact question versions
     And I log out
     And I log in as "admin"
     And I navigate to "Plugins > Learning outcome mapping > Frameworks and outcomes" in site administration
-    And I click on "Add outcome" "button"
+    And I click on "Add outcome" "link"
     And I set the following fields to these values:
       | Framework      | MBA614-FW                        |
       | Code           | CLO1                             |
