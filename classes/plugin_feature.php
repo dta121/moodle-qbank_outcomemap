@@ -44,7 +44,9 @@ class plugin_feature extends plugin_features_base {
      * @return outcome_column[]
      */
     public function get_question_columns(view $qbank): array {
-        return [new outcome_column($qbank)];
+        return $this->has_capabilities($qbank, ['local/outcomemap:viewdefinitions'])
+            ? [new outcome_column($qbank)]
+            : [];
     }
 
     /**
@@ -54,7 +56,10 @@ class plugin_feature extends plugin_features_base {
      * @return outcome_map_action[]
      */
     public function get_question_actions(view $qbank): array {
-        return [new outcome_map_action($qbank)];
+        return $this->has_capabilities($qbank, [
+            'local/outcomemap:viewdefinitions',
+            'local/outcomemap:mapquestions',
+        ]) ? [new outcome_map_action($qbank)] : [];
     }
 
     /**
@@ -64,7 +69,15 @@ class plugin_feature extends plugin_features_base {
      * @return \core_question\local\bank\condition[]
      */
     public function get_question_filters(?view $qbank = null): array {
-        return [new outcome_condition($qbank), new mapped_condition($qbank)];
+        // Core calls this without a view when discovering condition classes.
+        // Registration exposes no data; rendered filters and static SQL builders
+        // still enforce viewdefinitions in the active question-bank context.
+        if ($qbank === null) {
+            return [new outcome_condition(), new mapped_condition()];
+        }
+        return $this->has_capabilities($qbank, ['local/outcomemap:viewdefinitions'])
+            ? [new outcome_condition($qbank), new mapped_condition($qbank)]
+            : [];
     }
 
     /**
@@ -74,6 +87,31 @@ class plugin_feature extends plugin_features_base {
      * @return bulk_map_action[]
      */
     public function get_bulk_actions(?view $qbank = null): array {
-        return [new bulk_map_action($qbank)];
+        return $this->has_capabilities($qbank, [
+            'local/outcomemap:viewdefinitions',
+            'local/outcomemap:mapquestions',
+        ]) ? [new bulk_map_action($qbank)] : [];
+    }
+
+    /**
+     * Check every required local capability in the active question-bank context.
+     *
+     * Moodle 4.5 may request filters and bulk actions without passing the view,
+     * so the page context is the supported fallback for those registrations.
+     *
+     * @param view|null $qbank Question bank view when supplied by core.
+     * @param string[] $capabilities Capabilities which must all be present.
+     * @return bool
+     */
+    private function has_capabilities(?view $qbank, array $capabilities): bool {
+        global $PAGE;
+
+        $context = $qbank === null ? $PAGE->context : $qbank->contexts->lowest();
+        foreach ($capabilities as $capability) {
+            if (!has_capability($capability, $context)) {
+                return false;
+            }
+        }
+        return true;
     }
 }

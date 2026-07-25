@@ -27,8 +27,14 @@ use local_outcomemap\api\question_mappings;
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class outcome_column extends column_base {
+    /** Maximum IDs accepted by one public local service call. */
+    private const LOAD_BATCH_SIZE = 1000;
+
     /** @var array Mapping DTO lists keyed by question-version ID. */
     protected $mappingsbyversion = [];
+
+    /** @var int[]|null Version IDs loaded by the most recent core callback. */
+    protected $loadedversionids = null;
 
     /** @var bool[] Editor capability memo keyed by context ID. */
     protected $editablecontexts = [];
@@ -52,7 +58,10 @@ class outcome_column extends column_base {
     }
 
     /**
-     * Bulk-load mappings for the visible page in one public service call.
+     * Bulk-load mappings for the visible page in bounded service calls.
+     *
+     * Moodle supports up to 4,000 questions per page, while the public local
+     * API deliberately limits each cross-database-safe request to 1,000 IDs.
      *
      * @param \stdClass[] $questions Question rows for the visible page.
      */
@@ -64,9 +73,31 @@ class outcome_column extends column_base {
                 $versionids[] = (int) $question->versionid;
             }
         }
-        $this->mappingsbyversion = $versionids
-            ? question_mappings::get_for_question_versions($versionids)
-            : [];
+        $versionids = array_values(array_unique($versionids));
+        if ($versionids === $this->loadedversionids) {
+            return;
+        }
+        $this->loadedversionids = $versionids;
+        $this->mappingsbyversion = [];
+        foreach (array_chunk($versionids, self::LOAD_BATCH_SIZE) as $batch) {
+            $this->mappingsbyversion = array_replace(
+                $this->mappingsbyversion,
+                $this->load_mapping_batch($batch)
+            );
+        }
+    }
+
+    /**
+     * Load one public-service batch.
+     *
+     * Kept as a seam for verifying maximum-page chunking without creating
+     * thousands of database fixtures.
+     *
+     * @param int[] $questionversionids Question-version IDs.
+     * @return array Mapping DTO lists keyed by question-version ID.
+     */
+    protected function load_mapping_batch(array $questionversionids): array {
+        return question_mappings::get_for_question_versions($questionversionids);
     }
 
     /**
@@ -123,6 +154,7 @@ class outcome_column extends column_base {
         if (!array_key_exists($contextid, $this->editablecontexts)) {
             $context = \context::instance_by_id($contextid, IGNORE_MISSING);
             $this->editablecontexts[$contextid] = $context
+                && has_capability('local/outcomemap:viewdefinitions', $context)
                 && has_capability('local/outcomemap:mapquestions', $context);
         }
         if (!$this->editablecontexts[$contextid]) {

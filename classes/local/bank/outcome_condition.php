@@ -19,6 +19,7 @@ namespace qbank_outcomemap\local\bank;
 use core\output\datafilter;
 use core_question\local\bank\condition;
 use core_question\local\bank\view;
+use local_outcomemap\api\question_mappings;
 
 /**
  * Filter questions by governed outcome codes mapped to the exact version.
@@ -77,37 +78,12 @@ class outcome_condition extends condition {
      * @return array WHERE SQL and named parameters.
      */
     public static function build_query_from_filter(array $filter): array {
-        global $DB;
-        $values = [];
-        foreach ($filter['values'] ?? [] as $value) {
-            $value = trim(clean_param((string) $value, PARAM_TEXT));
-            if ($value !== '') {
-                $values[] = $value;
-            }
-        }
-        if (!$values) {
-            return ['', []];
-        }
-        $jointype = (int) ($filter['jointype'] ?? datafilter::JOINTYPE_ANY);
-        $fullcode = $DB->sql_concat('qbomf.code', "'.'", 'qbomi.code');
-        $fragments = [];
-        $params = [];
-        foreach (array_values($values) as $index => $value) {
-            $codeparam = 'qbomcode' . $index;
-            $fullparam = 'qbomfull' . $index;
-            $params[$codeparam] = '%' . $DB->sql_like_escape($value) . '%';
-            $params[$fullparam] = '%' . $DB->sql_like_escape($value) . '%';
-            $exists = 'EXISTS (SELECT 1
-                                 FROM {local_outcomemap_qmap} qbomm
-                                 JOIN {local_outcomemap_itemver} qbomv ON qbomv.id = qbomm.itemverid
-                                 JOIN {local_outcomemap_item} qbomi ON qbomi.id = qbomv.itemid
-                                 JOIN {local_outcomemap_fw} qbomf ON qbomf.id = qbomi.frameworkid
-                                WHERE qbomm.questionversionid = qv.id
-                                  AND (' . $DB->sql_like('qbomi.code', ':' . $codeparam, false)
-                                  . ' OR ' . $DB->sql_like($fullcode, ':' . $fullparam, false) . '))';
-            $fragments[] = $jointype === datafilter::JOINTYPE_NONE ? 'NOT ' . $exists : $exists;
-        }
-        $glue = $jointype === datafilter::JOINTYPE_ANY ? ' OR ' : ' AND ';
-        return ['(' . implode($glue, $fragments) . ')', $params];
+        global $PAGE;
+
+        return question_mappings::build_outcome_filter_query(
+            $PAGE->context,
+            $filter['values'] ?? [],
+            (int) ($filter['jointype'] ?? datafilter::JOINTYPE_ANY)
+        );
     }
 }

@@ -27,6 +27,7 @@ use qbank_outcomemap\local\bank\mapped_condition;
 use qbank_outcomemap\local\bank\outcome_column;
 use qbank_outcomemap\local\bank\outcome_condition;
 use qbank_outcomemap\local\bank\outcome_map_action;
+use qbank_outcomemap\local\bulk_mapping_service;
 
 /**
  * Tests for the outcome mapping question bank integration.
@@ -198,6 +199,59 @@ final class qbank_outcomemap_test extends \advanced_testcase {
     }
 
     /**
+     * Tests that the maximum supported page is split into safe public API batches.
+     */
+    public function test_column_chunks_maximum_question_bank_page(): void {
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+        [$course, $qbank] = $this->create_question_scope();
+        $view = $this->create_view($course, $qbank);
+        $column = new class($view) extends outcome_column {
+            /** @var int[][] Captured question-version ID batches. */
+            public array $batches = [];
+
+            /**
+             * Capture one batch without creating thousands of question fixtures.
+             *
+             * @param int[] $questionversionids Question-version IDs.
+             * @return array
+             */
+            protected function load_mapping_batch(array $questionversionids): array {
+                $this->batches[] = $questionversionids;
+                return [];
+            }
+        };
+        $rows = [];
+        for ($versionid = 1; $versionid <= 4000; $versionid++) {
+            $rows[] = (object) ['versionid' => $versionid];
+        }
+
+        $column->load_additional_data($rows);
+        // Moodle 5.2 currently invokes the column preload callback twice.
+        $column->load_additional_data($rows);
+
+        $this->assertCount(4, $column->batches);
+        foreach ($column->batches as $batch) {
+            $this->assertLessThanOrEqual(1000, count($batch));
+        }
+        $this->assertSame(range(1, 4000), array_merge(...$column->batches));
+    }
+
+    /**
+     * Core can discover filter condition classes without constructing a view.
+     */
+    public function test_filter_classes_register_without_view(): void {
+        $this->resetAfterTest(true);
+        $this->setUser($this->getDataGenerator()->create_user());
+
+        $filters = (new plugin_feature())->get_question_filters();
+
+        $this->assertCount(2, $filters);
+        $this->assertInstanceOf(outcome_condition::class, $filters[0]);
+        $this->assertInstanceOf(mapped_condition::class, $filters[1]);
+    }
+
+    /**
      * Tests the outcome filter condition SQL for match and negation joins.
      */
     public function test_filter_condition_query(): void {
@@ -267,5 +321,129 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $this->assertSame('alignment_only', $dto->role);
         $this->assertSame($versionuuid, $dto->outcomeversionuuid);
         $this->assertNull($dto->weight);
+    }
+
+    /**
+     * Tests that duplicate detection uses a fixed query budget for a large selection.
+     */
+    public function test_bulk_duplicate_preload_query_count_does_not_scale_per_question(): void {
+        global $DB;
+
+        $this->resetAfterTest(true);
+        $this->setAdminUser();
+        [, , $firstquestion] = $this->create_question_scope();
+        [$itemverid, $versionuuid] = $this->create_approved_outcome('CLOPERF');
+        $categoryid = (int) $DB->get_field_sql(
+            'SELECT qbe.questioncategoryid
+               FROM {question_versions} qv
+               JOIN {question_bank_entries} qbe ON qbe.id = qv.questionbankentryid
+              WHERE qv.id = :versionid',
+            ['versionid' => $firstquestion->versionid],
+            MUST_EXIST
+        );
+        $generator = $this->getDataGenerator()->get_plugin_generator('core_question');
+        $questions = [$firstquestion];
+        for ($index = 1; $index < 25; $index++) {
+            $questions[] = $generator->create_question('shortanswer', null, ['category' => $categoryid]);
+        }
+        foreach ($questions as $question) {
+            question_mapping_service::create([
+                'questionversionid' => $question->versionid,
+                'itemverid' => $itemverid,
+                'role' => 'alignment_only',
+                'effectivefrom' => self::EFFECTIVEFROM,
+            ]);
+        }
+        $questionids = array_map(static fn(\stdClass $question): int => (int) $question->id, $questions);
+
+        // Warm context and capability caches so the counters cover data access, not one-time bootstrap work.
+        bulk_mapping_service::add_alignment_drafts([$questionids[0]], $versionuuid);
+        $before = $DB->perf_get_queries();
+        $single = bulk_mapping_service::add_alignment_drafts([$questionids[0]], $versionuuid);
+        $singlequeries = $DB->perf_get_queries() - $before;
+
+        $before = $DB->perf_get_queries();
+        $many = bulk_mapping_service::add_alignment_drafts($questionids, $versionuuid);
+        $manyqueries = $DB->perf_get_queries() - $before;
+
+        $this->assertSame(0, $single->created);
+        $this->assertSame(1, $single->skipped);
+        $this->assertSame(0, $many->created);
+        $this->assertSame(count($questionids), $many->skipped);
+        $this->assertLessThanOrEqual($singlequeries + 1, $manyqueries);
+        $this->assertLessThanOrEqual(4, $manyqueries,
+            'Bulk metadata and existing mappings must be loaded with a fixed query budget.');
+    }
+
+    /**
+     * Tests that mapping metadata is not registered without definition-read access.
+     */
+    public function test_features_are_hidden_without_definition_read_capability(): void {
+        $this->resetAfterTest(true);
+        [$course, $qbank] = $this->create_question_scope();
+        $context = \context_module::instance($qbank->cmid);
+        $user = $this->getDataGenerator()->create_user();
+        $roleid = create_role('Question mapper without definition access', 'qmappernodef', '');
+        assign_capability('local/outcomemap:mapquestions', CAP_ALLOW, $roleid, $context->id, true);
+        role_assign($roleid, $user->id, $context->id);
+        $this->setUser($user);
+
+        $this->assertTrue(has_capability('local/outcomemap:mapquestions', $context));
+        $this->assertFalse(has_capability('local/outcomemap:viewdefinitions', $context));
+        $view = $this->create_view($course, $qbank);
+        $feature = new plugin_feature();
+        $this->assertSame([], $feature->get_question_columns($view));
+        $this->assertSame([], $feature->get_question_actions($view));
+        $this->assertSame([], $feature->get_question_filters($view));
+        $this->assertSame([], $feature->get_bulk_actions($view));
+    }
+
+    /**
+     * Tests that public qbank filter boundaries enforce definition-read access.
+     */
+    public function test_public_filter_queries_require_definition_read_capability(): void {
+        $this->resetAfterTest(true);
+        [, $qbank] = $this->create_question_scope();
+        $context = \context_module::instance($qbank->cmid);
+        $this->setUser($this->getDataGenerator()->create_user());
+
+        $deniedcalls = [
+            static fn() => question_mappings::build_mapped_filter_query($context, true),
+            static fn() => question_mappings::build_outcome_filter_query(
+                $context,
+                ['CLO1'],
+                \core\output\datafilter::JOINTYPE_ANY
+            ),
+        ];
+        foreach ($deniedcalls as $call) {
+            $denied = false;
+            try {
+                $call();
+            } catch (\required_capability_exception) {
+                $denied = true;
+            }
+            $this->assertTrue($denied, 'The public filter boundary must reject users without definition-read access.');
+        }
+    }
+
+    /**
+     * Tests the editing-teacher archetype contract for question mapping workflows.
+     */
+    public function test_editing_teacher_has_read_and_mapping_features(): void {
+        $this->resetAfterTest(true);
+        [$course, $qbank] = $this->create_question_scope();
+        $teacher = $this->getDataGenerator()->create_user();
+        $this->getDataGenerator()->enrol_user($teacher->id, $course->id, 'editingteacher');
+        $this->setUser($teacher);
+
+        $context = \context_module::instance($qbank->cmid);
+        $this->assertTrue(has_capability('local/outcomemap:viewdefinitions', $context));
+        $this->assertTrue(has_capability('local/outcomemap:mapquestions', $context));
+        $view = $this->create_view($course, $qbank);
+        $feature = new plugin_feature();
+        $this->assertCount(1, $feature->get_question_columns($view));
+        $this->assertCount(1, $feature->get_question_actions($view));
+        $this->assertCount(2, $feature->get_question_filters($view));
+        $this->assertCount(1, $feature->get_bulk_actions($view));
     }
 }

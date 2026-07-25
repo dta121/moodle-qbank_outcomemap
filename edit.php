@@ -28,7 +28,7 @@ require_once($CFG->libdir . '/questionlib.php');
 use local_outcomemap\api\context_resolver;
 use local_outcomemap\api\outcome_search;
 use local_outcomemap\api\question_mappings;
-use local_outcomemap\local\validation_exception;
+use local_outcomemap\api\validation_exception;
 use qbank_outcomemap\form\mapping_form;
 use qbank_outcomemap\local\bank\outcome_column;
 
@@ -36,6 +36,7 @@ $questionid = required_param('id', PARAM_INT);
 $returnurl = optional_param('returnurl', '', PARAM_LOCALURL);
 $action = optional_param('action', '', PARAM_ALPHA);
 $mappingid = optional_param('mappingid', 0, PARAM_INT);
+$confirmed = optional_param('confirm', 0, PARAM_BOOL);
 
 require_login();
 \core_question\local\bank\helper::require_plugin_enabled('qbank_outcomemap');
@@ -54,13 +55,32 @@ $PAGE->set_pagelayout('admin');
 $PAGE->set_title(get_string('managemappings', 'qbank_outcomemap'));
 $PAGE->set_heading(get_string('managemappings', 'qbank_outcomemap'));
 
+require_capability('local/outcomemap:viewdefinitions', $context);
 require_capability('local/outcomemap:mapquestions', $context);
 if (!question_has_capability_on($questionid, 'edit')) {
     throw new required_capability_exception($context, 'moodle/question:editall', 'nopermissions', '');
 }
 
 // Sesskey-protected row actions delegated to the system of record.
-if ($action !== '' && confirm_sesskey()) {
+if ($action !== '') {
+    require_sesskey();
+    if ($action === 'deletedraft' && $mappingid && !$confirmed) {
+        echo $OUTPUT->header();
+        echo $OUTPUT->heading(format_string($question->name)
+            . ' (v' . (int) $questionversion->version . ')', 2);
+        echo $OUTPUT->confirm(
+            get_string('confirmdeletedraft', 'qbank_outcomemap'),
+            new moodle_url($pageurl, [
+                'action' => 'deletedraft',
+                'mappingid' => $mappingid,
+                'confirm' => 1,
+                'sesskey' => sesskey(),
+            ]),
+            $pageurl
+        );
+        echo $OUTPUT->footer();
+        exit;
+    }
     try {
         switch ($action) {
             case 'deletedraft':
@@ -107,7 +127,7 @@ if ($data = $form->get_data()) {
 
 echo $OUTPUT->header();
 echo $OUTPUT->heading(format_string($question->name)
-    . ' (v' . (int) $questionversion->version . ')', 3);
+    . ' (v' . (int) $questionversion->version . ')', 2);
 
 // Assessed-weight validity summary.
 $report = question_mappings::validate_assessed_weights((int) $questionversion->id);
@@ -126,6 +146,10 @@ $mappings = question_mappings::get_for_question_versions([(int) $questionversion
 $mappings = $mappings[(int) $questionversion->id] ?? [];
 if ($mappings) {
     $table = new html_table();
+    $table->caption = get_string('mappingtablecaption', 'qbank_outcomemap', (object) [
+        'question' => format_string($question->name),
+        'version' => (int) $questionversion->version,
+    ]);
     $table->head = [
         get_string('outcome', 'qbank_outcomemap'),
         get_string('mappingrole', 'local_outcomemap'),
@@ -137,12 +161,12 @@ if ($mappings) {
     foreach ($mappings as $mapping) {
         $actions = [];
         if ($mapping->status === 'draft') {
-            $actions[] = html_writer::link(new moodle_url($pageurl, [
-                'action' => 'submitreview', 'mappingid' => $mapping->id, 'sesskey' => sesskey(),
-            ]), get_string('submitreview', 'local_outcomemap'));
-            $actions[] = html_writer::link(new moodle_url($pageurl, [
-                'action' => 'deletedraft', 'mappingid' => $mapping->id, 'sesskey' => sesskey(),
-            ]), get_string('delete'));
+            $actions[] = $OUTPUT->single_button(new moodle_url($pageurl, [
+                'action' => 'submitreview', 'mappingid' => $mapping->id,
+            ]), get_string('submitreview', 'local_outcomemap'), 'post');
+            $actions[] = $OUTPUT->single_button(new moodle_url($pageurl, [
+                'action' => 'deletedraft', 'mappingid' => $mapping->id,
+            ]), get_string('delete'), 'post');
         }
         $table->data[] = [
             s($mapping->frameworkcode . '.' . $mapping->outcomecode . ' v' . $mapping->outcomeversion)
@@ -151,10 +175,10 @@ if ($mappings) {
             get_string('mappingrole_' . $mapping->role, 'local_outcomemap'),
             $mapping->weight === null ? '—' : s(outcome_column::format_weight($mapping->weight)),
             get_string('status_' . $mapping->status, 'local_outcomemap'),
-            implode(' | ', $actions),
+            html_writer::div(implode(' ', $actions), 'd-flex flex-wrap align-items-center gap-2'),
         ];
     }
-    echo html_writer::table($table);
+    echo html_writer::div(html_writer::table($table), 'table-responsive');
 } else {
     echo $OUTPUT->notification(get_string('nomappings', 'qbank_outcomemap'),
         \core\output\notification::NOTIFY_INFO, false);

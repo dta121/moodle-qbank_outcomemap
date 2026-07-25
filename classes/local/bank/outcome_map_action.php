@@ -63,6 +63,7 @@ class outcome_map_action extends question_action_base {
         if (!array_key_exists($contextid, $this->capablecontexts)) {
             $context = \context::instance_by_id($contextid, IGNORE_MISSING);
             $this->capablecontexts[$contextid] = $context
+                && has_capability('local/outcomemap:viewdefinitions', $context)
                 && has_capability('local/outcomemap:mapquestions', $context);
         }
         if (!$this->capablecontexts[$contextid]) {

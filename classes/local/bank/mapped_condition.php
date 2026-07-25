@@ -18,6 +18,7 @@ namespace qbank_outcomemap\local\bank;
 
 use core_question\local\bank\condition;
 use core_question\local\bank\view;
+use local_outcomemap\api\question_mappings;
 
 /**
  * Yes/no filter for questions whose exact version carries outcome mappings.
@@ -92,12 +93,15 @@ class mapped_condition extends condition {
      * @return array WHERE SQL and named parameters.
      */
     public static function build_query_from_filter(array $filter): array {
+        global $PAGE;
+
         $values = $filter['values'] ?? [];
         if ($values === []) {
             return ['', []];
         }
-        $exists = 'EXISTS (SELECT 1 FROM {local_outcomemap_qmap} qbommap
-                            WHERE qbommap.questionversionid = qv.id)';
-        return [(int) reset($values) === 1 ? $exists : 'NOT ' . $exists, []];
+        return question_mappings::build_mapped_filter_query(
+            $PAGE->context,
+            (int) reset($values) === 1
+        );
     }
 }

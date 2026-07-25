@@ -27,8 +27,8 @@ require_once($CFG->libdir . '/questionlib.php');
 require_once($CFG->dirroot . '/question/editlib.php');
 
 use local_outcomemap\api\outcome_search;
-use local_outcomemap\api\question_mappings;
 use qbank_outcomemap\form\bulk_map_form;
+use qbank_outcomemap\local\bulk_mapping_service;
 
 $cmid = optional_param('cmid', 0, PARAM_INT);
 $courseid = optional_param('courseid', 0, PARAM_INT);
@@ -47,6 +47,7 @@ if ($cmid) {
 } else {
     throw new moodle_exception('missingcourseorcmid', 'question');
 }
+require_capability('local/outcomemap:viewdefinitions', $thiscontext);
 require_capability('local/outcomemap:mapquestions', $thiscontext);
 
 // The question bank posts one q<id> parameter per selected question.
@@ -95,39 +96,8 @@ if ($form->is_cancelled()) {
 }
 
 if (($data = $form->get_data()) && !empty($data->outcomeversionuuid)) {
-    global $DB;
-    $created = 0;
-    $skipped = 0;
-    foreach ($ids as $questionid) {
-        $versionid = $DB->get_field('question_versions', 'id', ['questionid' => $questionid]);
-        if (!$versionid || !question_has_capability_on($questionid, 'edit')) {
-            $skipped++;
-            continue;
-        }
-        $existing = question_mappings::get_for_question_versions([(int) $versionid]);
-        $duplicate = false;
-        foreach ($existing[(int) $versionid] ?? [] as $mapping) {
-            if (
-                $mapping->outcomeversionuuid === $data->outcomeversionuuid
-                    && $mapping->role === 'alignment_only'
-            ) {
-                $duplicate = true;
-                break;
-            }
-        }
-        if ($duplicate) {
-            $skipped++;
-            continue;
-        }
-        try {
-            question_mappings::create_draft((int) $versionid, (string) $data->outcomeversionuuid, 'alignment_only');
-            $created++;
-        } catch (moodle_exception $e) {
-            $skipped++;
-        }
-    }
-    redirect($backurl, get_string('bulkmapresult', 'qbank_outcomemap',
-        (object) ['created' => $created, 'skipped' => $skipped]));
+    $result = bulk_mapping_service::add_alignment_drafts($ids, (string) $data->outcomeversionuuid);
+    redirect($backurl, get_string('bulkmapresult', 'qbank_outcomemap', $result));
 }
 
 echo $OUTPUT->header();
