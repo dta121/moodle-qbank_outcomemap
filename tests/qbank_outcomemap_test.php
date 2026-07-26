@@ -224,7 +224,7 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $this->assertFileDoesNotExist(__DIR__ . '/../db/install.xml');
         $this->assertFileDoesNotExist(__DIR__ . '/../db/access.php');
         $version = file_get_contents(__DIR__ . '/../version.php');
-        $this->assertStringContainsString("'local_outcomemap' => 2026072703", $version);
+        $this->assertStringContainsString("'local_outcomemap' => 2026072704", $version);
         $this->assertTrue(class_exists(question_mappings::class),
             'The pinned public local_outcomemap service dependency must be available.');
     }
@@ -549,9 +549,13 @@ final class qbank_outcomemap_test extends \advanced_testcase {
 
         $filters = (new plugin_feature())->get_question_filters();
 
-        $this->assertCount(2, $filters);
+        $this->assertCount(6, $filters);
         $this->assertInstanceOf(outcome_condition::class, $filters[0]);
-        $this->assertInstanceOf(mapped_condition::class, $filters[1]);
+        $this->assertInstanceOf(role_condition::class, $filters[1]);
+        $this->assertInstanceOf(status_condition::class, $filters[2]);
+        $this->assertInstanceOf(mapped_condition::class, $filters[3]);
+        $this->assertInstanceOf(invalid_weight_condition::class, $filters[4]);
+        $this->assertInstanceOf(copied_condition::class, $filters[5]);
     }
 
     /**
