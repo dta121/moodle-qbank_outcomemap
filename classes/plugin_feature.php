@@ -48,13 +48,9 @@ class plugin_feature extends plugin_features_base {
      * @return outcome_column[]
      */
     public function get_question_columns(view $qbank): array {
-        if (!$this->dependency_available()) {
-            return [];
-        }
-        if (!$this->has_capability_in_view($qbank, 'local/outcomemap:viewdefinitions')) {
-            return [];
-        }
-        return [new outcome_column($qbank)];
+        return $this->has_capabilities($qbank, ['local/outcomemap:viewdefinitions'])
+            ? [new outcome_column($qbank)]
+            : [];
     }
 
     /**
@@ -64,13 +60,10 @@ class plugin_feature extends plugin_features_base {
      * @return outcome_map_action[]
      */
     public function get_question_actions(view $qbank): array {
-        if (!$this->dependency_available()) {
-            return [];
-        }
-        if (!$this->has_capability_in_view($qbank, 'local/outcomemap:mapquestions')) {
-            return [];
-        }
-        return [new outcome_map_action($qbank)];
+        return $this->has_capabilities($qbank, [
+            'local/outcomemap:viewdefinitions',
+            'local/outcomemap:mapquestions',
+        ]) ? [new outcome_map_action($qbank)] : [];
     }
 
     /**
@@ -83,9 +76,24 @@ class plugin_feature extends plugin_features_base {
         if (!$this->dependency_available()) {
             return [];
         }
-        if ($qbank !== null && !$this->has_capability_in_view($qbank, 'local/outcomemap:viewdefinitions')) {
-            return [];
+        // Core calls this without a view when discovering condition classes.
+        // Registration exposes no data; rendered filters and static SQL builders
+        // still enforce viewdefinitions in the active question-bank context.
+        if ($qbank === null) {
+            return $this->conditions(null);
         }
+        return $this->has_capabilities($qbank, ['local/outcomemap:viewdefinitions'])
+            ? $this->conditions($qbank)
+            : [];
+    }
+
+    /**
+     * Build the full governed filter set for one question-bank view.
+     *
+     * @param view|null $qbank Question bank view, or null during class discovery.
+     * @return \core_question\local\bank\condition[]
+     */
+    private function conditions(?view $qbank): array {
         return [
             new outcome_condition($qbank),
             new role_condition($qbank),
@@ -106,10 +114,35 @@ class plugin_feature extends plugin_features_base {
         if (!$this->dependency_available()) {
             return [];
         }
-        if ($qbank !== null && !$this->has_capability_in_view($qbank, 'local/outcomemap:mapquestions')) {
-            return [];
+        return $this->has_capabilities($qbank, [
+            'local/outcomemap:viewdefinitions',
+            'local/outcomemap:mapquestions',
+        ]) ? [new bulk_map_action($qbank)] : [];
+    }
+
+    /**
+     * Check every required local capability in the active question-bank context.
+     *
+     * Moodle 4.5 may request filters and bulk actions without passing the view,
+     * so the page context is the supported fallback for those registrations.
+     *
+     * @param view|null $qbank Question bank view when supplied by core.
+     * @param string[] $capabilities Capabilities which must all be present.
+     * @return bool
+     */
+    private function has_capabilities(?view $qbank, array $capabilities): bool {
+        global $PAGE;
+
+        if (!$this->dependency_available()) {
+            return false;
         }
-        return [new bulk_map_action($qbank)];
+        $context = $qbank === null ? $PAGE->context : $qbank->contexts->lowest();
+        foreach ($capabilities as $capability) {
+            if (!has_capability($capability, $context)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Fail closed if an administrator has removed the required system-of-record plugin. */
@@ -118,15 +151,5 @@ class plugin_feature extends plugin_features_base {
         return !empty($directory)
             && class_exists(\local_outcomemap\api\question_mappings::class)
             && class_exists(\local_outcomemap\api\workflow::class);
-    }
-
-    /** Check a local capability in at least one authoritative qbank context. */
-    private function has_capability_in_view(view $qbank, string $capability): bool {
-        foreach ($qbank->contexts->all() as $context) {
-            if (has_capability($capability, $context)) {
-                return true;
-            }
-        }
-        return false;
     }
 }

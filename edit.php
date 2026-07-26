@@ -70,6 +70,7 @@ $PAGE->set_pagelayout('admin');
 $PAGE->set_title(get_string('managemappings', 'qbank_outcomemap'));
 $PAGE->set_heading(get_string('managemappings', 'qbank_outcomemap'));
 
+require_capability('local/outcomemap:viewdefinitions', $context);
 require_capability('local/outcomemap:mapquestions', $context);
 if (!question_has_capability_on($questionid, 'edit')) {
     throw new required_capability_exception($context, 'moodle/question:editall', 'nopermissions', '');
@@ -95,22 +96,25 @@ if ((int) $questionversion->version > 1) {
     $copypreview = question_mappings::preview_copy_to_version((int) $questionversion->id);
 }
 
-if ($action === 'deletedraft' && $mappingid && confirm_sesskey() && !$confirmed) {
-    $yesurl = new moodle_url($pageurl, [
-        'action' => 'deletedraft',
-        'mappingid' => $mappingid,
-        'confirm' => 1,
-        'sesskey' => sesskey(),
-    ]);
-    echo $OUTPUT->header();
-    echo $OUTPUT->heading(get_string('deletemapping', 'qbank_outcomemap'));
-    echo $OUTPUT->confirm(get_string('confirmdeletemapping', 'qbank_outcomemap'), $yesurl, $pageurl);
-    echo $OUTPUT->footer();
-    exit;
-}
-
 // Sesskey-protected row actions delegated to the public system-of-record API.
-if ($action !== '' && confirm_sesskey()) {
+if ($action !== '') {
+    require_sesskey();
+    if ($action === 'deletedraft' && $mappingid && !$confirmed) {
+        echo $OUTPUT->header();
+        echo $OUTPUT->heading(get_string('deletemapping', 'qbank_outcomemap'));
+        echo $OUTPUT->confirm(
+            get_string('confirmdeletemapping', 'qbank_outcomemap'),
+            new moodle_url($pageurl, [
+                'action' => 'deletedraft',
+                'mappingid' => $mappingid,
+                'confirm' => 1,
+                'sesskey' => sesskey(),
+            ]),
+            $pageurl
+        );
+        echo $OUTPUT->footer();
+        exit;
+    }
     try {
         switch ($action) {
             case 'deletedraft':
@@ -222,7 +226,7 @@ if ($data = $form->get_data()) {
 
 echo $OUTPUT->header();
 echo $OUTPUT->heading(format_string($question->name, true, ['context' => $context])
-    . ' (v' . (int) $questionversion->version . ')', 3);
+    . ' (v' . (int) $questionversion->version . ')', 2);
 
 // Assessed-weight validity summary for all current exact-version mappings.
 $hasassessed = false;
@@ -253,6 +257,10 @@ echo $OUTPUT->notification(implode(' · ', $reportitems), $reporttype, false);
 
 if ($mappings) {
     $table = new html_table();
+    $table->caption = get_string('mappingtablecaption', 'qbank_outcomemap', (object) [
+        'question' => format_string($question->name),
+        'version' => (int) $questionversion->version,
+    ]);
     $table->head = [
         get_string(
             workflow::requires_independent_approval() ? 'outcome' : 'outcome_finalization',
@@ -268,15 +276,18 @@ if ($mappings) {
     foreach ($mappings as $mapping) {
         $actions = [];
         if ($mapping->status === workflow::DRAFT) {
+            // Switching the editor into edit mode is a safe read, so it stays a link.
             $actions[] = html_writer::link(new moodle_url($pageurl, [
                 'editmappingid' => $mapping->id,
             ]), get_string('edit'));
-            $actions[] = html_writer::link(new moodle_url($pageurl, [
+            // State-changing actions post with an explicit sesskey; single_button
+            // only forwards URL parameters as hidden inputs and adds none itself.
+            $actions[] = $OUTPUT->single_button(new moodle_url($pageurl, [
                 'action' => 'submitreview', 'mappingid' => $mapping->id, 'sesskey' => sesskey(),
-            ]), workflow::submit_action_label());
-            $actions[] = html_writer::link(new moodle_url($pageurl, [
+            ]), workflow::submit_action_label(), 'post');
+            $actions[] = $OUTPUT->single_button(new moodle_url($pageurl, [
                 'action' => 'deletedraft', 'mappingid' => $mapping->id, 'sesskey' => sesskey(),
-            ]), get_string('delete'));
+            ]), get_string('delete'), 'post');
         }
         $outcomelabel = s($mapping->frameworkcode . '.' . $mapping->outcomecode
             . ' v' . $mapping->outcomeversion)
@@ -298,10 +309,10 @@ if ($mappings) {
             get_string('mappingrole_' . $mapping->role, 'local_outcomemap'),
             $mapping->weight === null ? '—' : s(outcome_column::format_weight($mapping->weight)),
             workflow::status_label($mapping->status),
-            implode(' | ', $actions),
+            html_writer::div(implode(' ', $actions), 'd-flex flex-wrap align-items-center gap-2'),
         ];
     }
-    echo html_writer::table($table);
+    echo html_writer::div(html_writer::table($table), 'table-responsive');
 } else {
     echo $OUTPUT->notification(get_string('nomappings', 'qbank_outcomemap'),
         \core\output\notification::NOTIFY_INFO, false);

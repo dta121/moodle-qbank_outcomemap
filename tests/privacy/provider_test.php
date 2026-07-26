@@ -14,21 +14,25 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
 
+namespace qbank_outcomemap\privacy;
+
 /**
- * Plugin version information.
+ * Privacy declaration coverage for the presentation-only qbank plugin.
  *
  * @package    qbank_outcomemap
  * @copyright  2026 Moodle Learning Outcome Mapping contributors
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ * @covers     \qbank_outcomemap\privacy\provider
  */
-
-defined('MOODLE_INTERNAL') || die();
-
-$plugin->component = 'qbank_outcomemap';
-$plugin->version = 2026072800;
-$plugin->requires = 2024100700; // Moodle 4.5 minimum; validated against Moodle 5.2.
-$plugin->maturity = MATURITY_BETA;
-$plugin->release = '0.8.0';
-$plugin->dependencies = [
-    'local_outcomemap' => 2026072704,
-];
+final class provider_test extends \advanced_testcase {
+    /**
+     * The qbank plugin stores no personal data of its own.
+     */
+    public function test_null_provider_reason(): void {
+        $this->assertSame('privacy:metadata', provider::get_reason());
+        $this->assertInstanceOf(
+            \core_privacy\local\metadata\null_provider::class,
+            new provider()
+        );
+    }
+}

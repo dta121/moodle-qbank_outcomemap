@@ -61,6 +61,7 @@ $string['mappingcreated'] = 'Draft mapping created.';
 $string['mappingupdated'] = 'Draft mapping updated.';
 $string['invalidmappingedit'] = 'The submitted draft no longer matches the exact-version mapping selected for editing. Reload the page and try again.';
 $string['mappingdeleted'] = 'Draft mapping deleted.';
+$string['mappingtablecaption'] = 'Outcome mappings for {$a->question}, exact question version {$a->version}';
 $string['mappingsubmitted'] = 'Mapping submitted for review.';
 $string['mappingfinalized'] = 'Mapping finalized.';
 $string['mappingscopied'] = '{$a} mapping(s) copied from the previous version as drafts.';
