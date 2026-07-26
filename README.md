@@ -12,9 +12,8 @@ Read [docs/QBANK_IMPLEMENTATION_PLAN.md](docs/QBANK_IMPLEMENTATION_PLAN.md) befo
 - Minimum supported Moodle version: 4.5 (`2024100700`); compatible through Moodle 5.2/5.3
 - Moodle 5.2 validation target: `D:\wamp64\www\moodle502\public\question\bank\outcomemap`
 - Component name: `qbank_outcomemap`
-- Required dependency: `local_outcomemap` (2026072400 or later)
+- Required dependency: `local_outcomemap` (2026072703 or later)
 
-Implemented so far: outcome column with bulk mapping load, outcome filter,
-per-question mapping editor with version-copy-as-draft, and a bulk
-alignment-only mapping action. All reads and mutations go through the public
-`local_outcomemap` service boundary.
+The plugin intentionally declares no qbank-owned capabilities or persistence. Every read and mutation is authorized by both the applicable Moodle question capability and the public `local_outcomemap` service/capability boundary. Mapping records, audit history, calculations, and evidence remain owned by `local_outcomemap`.
+
+Implementation follows the eight milestones in [docs/QBANK_IMPLEMENTATION_PLAN.md](docs/QBANK_IMPLEMENTATION_PLAN.md).

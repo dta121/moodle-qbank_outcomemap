@@ -10,17 +10,17 @@ namespace qbank_outcomemap\local\bank;
 
 use local_outcomemap\api\question_mapping_filters;
 
-/** Yes/no filter for active mappings on the exact question version. */
-final class mapped_condition extends binary_mapping_condition {
+/** Yes/no filter for invalid current assessed-weight totals. */
+final class invalid_weight_condition extends binary_mapping_condition {
     protected static function criterion(): string {
-        return question_mapping_filters::MAPPED;
+        return question_mapping_filters::INVALID_WEIGHT;
     }
 
     public static function get_condition_key() {
-        return 'outcomemapmapped';
+        return 'outcomemapinvalidweight';
     }
 
     public function get_title() {
-        return get_string('mappedfiltertitle', 'qbank_outcomemap');
+        return get_string('invalidweightfiltertitle', 'qbank_outcomemap');
     }
 }

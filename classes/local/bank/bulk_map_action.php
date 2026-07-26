@@ -21,10 +21,11 @@ use core_question\local\bank\view;
 use core_question\local\bank\view_component;
 
 /**
- * Bulk action adding one alignment-only outcome draft to selected questions.
+ * Bulk exact-version outcome mapping workflow.
  *
- * Assessed mappings are excluded from bulk creation on purpose: assessed
- * weights are governed per question version and are never assigned in bulk.
+ * The landing page provides add, common-role change, selected-draft delete,
+ * and selected-draft submission operations. Assessed changes require explicit
+ * per-question or per-mapping weights and an atomic validation preview.
  *
  * @package    qbank_outcomemap
  * @copyright  2026 Moodle Learning Outcome Mapping contributors

@@ -18,6 +18,7 @@ namespace qbank_outcomemap\local\bank;
 
 use core_question\local\bank\column_base;
 use local_outcomemap\api\question_mappings;
+use local_outcomemap\api\workflow;
 
 /**
  * Question-bank column summarising governed outcome mappings per exact version.
@@ -61,11 +62,11 @@ class outcome_column extends column_base {
         $versionids = [];
         foreach ($questions as $question) {
             if (!empty($question->versionid)) {
-                $versionids[] = (int) $question->versionid;
+                $versionids[(int) $question->versionid] = (int) $question->versionid;
             }
         }
         $this->mappingsbyversion = $versionids
-            ? question_mappings::get_for_question_versions($versionids)
+            ? question_mappings::get_for_question_versions(array_values($versionids))
             : [];
     }
 
@@ -81,13 +82,22 @@ class outcome_column extends column_base {
         foreach ($mappings as $mapping) {
             $label = $mapping->frameworkcode . '.' . $mapping->outcomecode . ' v' . $mapping->outcomeversion;
             $role = get_string('mappingrole_' . $mapping->role, 'local_outcomemap');
-            $status = get_string('status_' . $mapping->status, 'local_outcomemap');
+            $status = workflow::status_label($mapping->status);
             $text = $label . ' · ' . $role;
             if ($mapping->weight !== null) {
                 $text .= ' ' . self::format_weight($mapping->weight);
             }
             $text .= ' · ' . $status;
-            $class = $mapping->status === 'approved' ? 'badge bg-success text-white' : 'badge bg-secondary text-dark';
+            $statusclasses = [
+                workflow::DRAFT => 'badge bg-secondary text-white',
+                workflow::NEEDS_REVIEW => 'badge bg-warning text-dark',
+                workflow::APPROVED => 'badge bg-success text-white',
+                workflow::RETIRED => 'badge bg-dark text-white',
+            ];
+            $roleclass = $mapping->role === 'assesses'
+                ? ' qbank-outcomemap-assessed'
+                : ' qbank-outcomemap-alignment';
+            $class = ($statusclasses[$mapping->status] ?? 'badge bg-secondary text-white') . $roleclass;
             $parts[] = \html_writer::span(s($text), $class, [
                 'title' => s($mapping->outcomeshortstatement ?? $mapping->outcomestatement),
             ]);

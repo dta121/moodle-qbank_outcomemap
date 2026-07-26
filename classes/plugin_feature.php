@@ -19,10 +19,14 @@ namespace qbank_outcomemap;
 use core_question\local\bank\plugin_features_base;
 use core_question\local\bank\view;
 use qbank_outcomemap\local\bank\bulk_map_action;
+use qbank_outcomemap\local\bank\copied_condition;
+use qbank_outcomemap\local\bank\invalid_weight_condition;
 use qbank_outcomemap\local\bank\mapped_condition;
 use qbank_outcomemap\local\bank\outcome_column;
 use qbank_outcomemap\local\bank\outcome_condition;
 use qbank_outcomemap\local\bank\outcome_map_action;
+use qbank_outcomemap\local\bank\role_condition;
+use qbank_outcomemap\local\bank\status_condition;
 
 /**
  * Question-bank feature registration for governed outcome mappings.
@@ -44,6 +48,12 @@ class plugin_feature extends plugin_features_base {
      * @return outcome_column[]
      */
     public function get_question_columns(view $qbank): array {
+        if (!$this->dependency_available()) {
+            return [];
+        }
+        if (!$this->has_capability_in_view($qbank, 'local/outcomemap:viewdefinitions')) {
+            return [];
+        }
         return [new outcome_column($qbank)];
     }
 
@@ -54,6 +64,12 @@ class plugin_feature extends plugin_features_base {
      * @return outcome_map_action[]
      */
     public function get_question_actions(view $qbank): array {
+        if (!$this->dependency_available()) {
+            return [];
+        }
+        if (!$this->has_capability_in_view($qbank, 'local/outcomemap:mapquestions')) {
+            return [];
+        }
         return [new outcome_map_action($qbank)];
     }
 
@@ -64,7 +80,20 @@ class plugin_feature extends plugin_features_base {
      * @return \core_question\local\bank\condition[]
      */
     public function get_question_filters(?view $qbank = null): array {
-        return [new outcome_condition($qbank), new mapped_condition($qbank)];
+        if (!$this->dependency_available()) {
+            return [];
+        }
+        if ($qbank !== null && !$this->has_capability_in_view($qbank, 'local/outcomemap:viewdefinitions')) {
+            return [];
+        }
+        return [
+            new outcome_condition($qbank),
+            new role_condition($qbank),
+            new status_condition($qbank),
+            new mapped_condition($qbank),
+            new invalid_weight_condition($qbank),
+            new copied_condition($qbank),
+        ];
     }
 
     /**
@@ -74,6 +103,30 @@ class plugin_feature extends plugin_features_base {
      * @return bulk_map_action[]
      */
     public function get_bulk_actions(?view $qbank = null): array {
+        if (!$this->dependency_available()) {
+            return [];
+        }
+        if ($qbank !== null && !$this->has_capability_in_view($qbank, 'local/outcomemap:mapquestions')) {
+            return [];
+        }
         return [new bulk_map_action($qbank)];
+    }
+
+    /** Fail closed if an administrator has removed the required system-of-record plugin. */
+    protected function dependency_available(): bool {
+        $directory = \core_component::get_component_directory('local_outcomemap');
+        return !empty($directory)
+            && class_exists(\local_outcomemap\api\question_mappings::class)
+            && class_exists(\local_outcomemap\api\workflow::class);
+    }
+
+    /** Check a local capability in at least one authoritative qbank context. */
+    private function has_capability_in_view(view $qbank, string $capability): bool {
+        foreach ($qbank->contexts->all() as $context) {
+            if (has_capability($capability, $context)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -9,4 +9,7 @@ Thumbs.db
 
 # Test and tooling artifacts.
 .phpunit.result.cache
+.phpunit.cache/
+phpunit.xml
 node_modules/
+semantic-review/

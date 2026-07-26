@@ -15,25 +15,39 @@
 // along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
 
 /**
- * Bulk alignment-only outcome mapping for selected questions.
+ * Preview and atomically apply bulk exact-version outcome mappings.
  *
  * @package    qbank_outcomemap
  * @copyright  2026 Moodle Learning Outcome Mapping contributors
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-require_once(__DIR__ . '/../../../config.php');
+// __DIR__ resolves symlinks, so when this plugin directory is symlinked into a
+// Moodle install (a common dev setup) it points at the checkout rather than at
+// question/bank/outcomemap, and the relative path above lands outside the site.
+// SCRIPT_FILENAME keeps the unresolved request path, so it still finds config.
+$configfile = __DIR__ . '/../../../config.php';
+if (!file_exists($configfile) && !empty($_SERVER['SCRIPT_FILENAME'])) {
+    $fallback = dirname($_SERVER['SCRIPT_FILENAME'], 4) . '/config.php';
+    if (file_exists($fallback)) {
+        $configfile = $fallback;
+    }
+}
+require_once($configfile);
 require_once($CFG->libdir . '/questionlib.php');
 require_once($CFG->dirroot . '/question/editlib.php');
 
 use local_outcomemap\api\outcome_search;
 use local_outcomemap\api\question_mappings;
+use local_outcomemap\api\validation_exception;
+use local_outcomemap\api\workflow;
 use qbank_outcomemap\form\bulk_map_form;
 
 $cmid = optional_param('cmid', 0, PARAM_INT);
 $courseid = optional_param('courseid', 0, PARAM_INT);
 $returnurl = optional_param('returnurl', '', PARAM_LOCALURL);
 $questionids = optional_param('questionids', '', PARAM_SEQUENCE);
+$confirmed = optional_param('confirmed', 0, PARAM_BOOL);
 
 \core_question\local\bank\helper::require_plugin_enabled('qbank_outcomemap');
 
@@ -59,21 +73,29 @@ if ($questionids === '') {
     }
     $questionids = implode(',', $selected);
 }
+$ids = array_values(array_unique(array_filter(array_map('intval', explode(',', $questionids)))));
+sort($ids);
 
 $PAGE->set_context($thiscontext);
-$PAGE->set_url(new moodle_url('/question/bank/outcomemap/bulk.php'));
+$PAGE->set_url(new moodle_url('/question/bank/outcomemap/bulk.php', $cmid
+    ? ['cmid' => $cmid]
+    : ['courseid' => $courseid]));
 $PAGE->set_title(get_string('bulkmaptitle', 'qbank_outcomemap'));
 $PAGE->set_heading(get_string('bulkmaptitle', 'qbank_outcomemap'));
 
 $backurl = $returnurl !== ''
     ? new moodle_url($returnurl)
     : new moodle_url('/question/edit.php', $cmid ? ['cmid' => $cmid] : ['courseid' => $courseid]);
-
-$ids = array_values(array_filter(array_map('intval', explode(',', $questionids))));
 if (!$ids) {
     redirect($backurl, get_string('bulknoquestions', 'qbank_outcomemap'), null,
         \core\output\notification::NOTIFY_WARNING);
 }
+
+// This call resolves exact question versions, verifies every selected row, and
+// bulk-loads the available draft inventory without exposing local table access.
+$inventory = question_mappings::preview_bulk($ids, [
+    'action' => question_mappings::BULK_INSPECT,
+]);
 
 $outcomeoptions = ['' => get_string('choosedots')];
 foreach (outcome_search::search($thiscontext, '', null, 200) as $outcome) {
@@ -82,55 +104,185 @@ foreach (outcome_search::search($thiscontext, '', null, 200) as $outcome) {
     $outcomeoptions[$outcome->versionuuid] = $label;
 }
 
-$form = new bulk_map_form(null, [
+$customdata = [
     'questionids' => implode(',', $ids),
     'cmid' => $cmid,
     'courseid' => $courseid,
     'returnurl' => $returnurl,
     'outcomes' => $outcomeoptions,
-]);
+    'questions' => $inventory->questions,
+];
 
-if ($form->is_cancelled()) {
-    redirect($backurl);
-}
-
-if (($data = $form->get_data()) && !empty($data->outcomeversionuuid)) {
-    global $DB;
-    $created = 0;
-    $skipped = 0;
-    foreach ($ids as $questionid) {
-        $versionid = $DB->get_field('question_versions', 'id', ['questionid' => $questionid]);
-        if (!$versionid || !question_has_capability_on($questionid, 'edit')) {
-            $skipped++;
-            continue;
+/** Build the public operation array from a normal preview form submission. */
+$operationfromform = static function (\stdClass $data) use ($inventory): array {
+    $operation = [
+        'action' => (string) $data->operation,
+        'role' => (string) ($data->role ?? ''),
+        'outcomeversionuuid' => (string) ($data->outcomeversionuuid ?? ''),
+        'notes' => trim((string) ($data->notes ?? '')),
+        'reason' => trim((string) ($data->reason ?? '')),
+        'mappingids' => [],
+        'weights' => [],
+    ];
+    foreach ($inventory->questions as $question) {
+        $questionweight = 'questionweight_' . (int) $question->questionid;
+        if (isset($data->{$questionweight}) && trim((string) $data->{$questionweight}) !== '') {
+            $operation['weights'][(int) $question->questionid] = trim((string) $data->{$questionweight});
         }
-        $existing = question_mappings::get_for_question_versions([(int) $versionid]);
-        $duplicate = false;
-        foreach ($existing[(int) $versionid] ?? [] as $mapping) {
-            if (
-                $mapping->outcomeversionuuid === $data->outcomeversionuuid
-                    && $mapping->role === 'alignment_only'
-            ) {
-                $duplicate = true;
-                break;
+        foreach ($question->drafts as $draft) {
+            $mappingfield = 'mapping_' . (int) $draft->id;
+            if (!empty($data->{$mappingfield})) {
+                $operation['mappingids'][] = (int) $draft->id;
+                $weightfield = 'mappingweight_' . (int) $draft->id;
+                if (isset($data->{$weightfield}) && trim((string) $data->{$weightfield}) !== '') {
+                    $operation['weights'][(int) $draft->id] = trim((string) $data->{$weightfield});
+                }
             }
         }
-        if ($duplicate) {
-            $skipped++;
-            continue;
-        }
+    }
+    return $operation;
+};
+
+/** Build the immutable public operation array posted by the confirmation form. */
+$operationfromconfirmation = static function (): array {
+    $weights = json_decode(optional_param('weightsjson', '[]', PARAM_RAW), true);
+    if (!is_array($weights)) {
+        $weights = [];
+    }
+    return [
+        'action' => required_param('operation', PARAM_ALPHAEXT),
+        'role' => optional_param('role', '', PARAM_ALPHAEXT),
+        'outcomeversionuuid' => optional_param('outcomeversionuuid', '', PARAM_ALPHANUMEXT),
+        'effectivefrom' => optional_param('effectivefrom', 0, PARAM_INT),
+        'mappingids' => array_values(array_filter(array_map(
+            'intval',
+            explode(',', optional_param('mappingids', '', PARAM_SEQUENCE))
+        ))),
+        'weights' => $weights,
+        'notes' => optional_param('notes', '', PARAM_RAW),
+        'reason' => optional_param('reason', '', PARAM_RAW),
+    ];
+};
+
+$notification = null;
+$notificationtype = \core\output\notification::NOTIFY_ERROR;
+$preview = null;
+$entryform = null;
+$confirmform = null;
+
+if ($confirmed) {
+    if (optional_param('cancel', 0, PARAM_BOOL)) {
+        redirect($backurl);
+    }
+    require_sesskey();
+    $operation = $operationfromconfirmation();
+    try {
+        $result = question_mappings::commit_bulk(
+            $ids,
+            $operation,
+            required_param('previewtoken', PARAM_ALPHANUM)
+        );
+        redirect($backurl, get_string('bulkmapresult', 'qbank_outcomemap', (object) [
+            'affected' => $result->affected,
+            'questions' => $result->questioncount,
+        ]));
+    } catch (validation_exception $e) {
+        $notification = $e->getMessage();
+        // Show a fresh preview rather than silently retrying a stale or invalid operation.
         try {
-            question_mappings::create_draft((int) $versionid, (string) $data->outcomeversionuuid, 'alignment_only');
-            $created++;
-        } catch (moodle_exception $e) {
-            $skipped++;
+            $preview = question_mappings::preview_bulk($ids, $operation);
+        } catch (validation_exception $ignored) {
+            $preview = null;
         }
     }
-    redirect($backurl, get_string('bulkmapresult', 'qbank_outcomemap',
-        (object) ['created' => $created, 'skipped' => $skipped]));
+} else {
+    $entryform = new bulk_map_form(null, $customdata);
+    if ($entryform->is_cancelled()) {
+        redirect($backurl);
+    }
+    if ($data = $entryform->get_data()) {
+        try {
+            $preview = question_mappings::preview_bulk($ids, $operationfromform($data));
+            if (!$preview->valid) {
+                $notification = get_string('bulkpreviewhaserrors', 'qbank_outcomemap');
+            }
+        } catch (validation_exception $e) {
+            $notification = $e->getMessage();
+        }
+    }
+}
+
+if ($preview && $preview->valid) {
+    $confirmform = new bulk_map_form(null, $customdata + [
+        'confirmed' => true,
+        'preview' => $preview,
+    ]);
 }
 
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('bulkmapcount', 'qbank_outcomemap', count($ids)), 3);
-$form->display();
+if ($notification !== null) {
+    echo $OUTPUT->notification($notification, $notificationtype, false);
+}
+
+if ($preview) {
+    echo $OUTPUT->heading(get_string('bulkpreviewheading', 'qbank_outcomemap'), 4);
+    $table = new html_table();
+    $table->attributes['class'] = 'generaltable';
+    $table->caption = get_string('bulkpreviewtablecaption', 'qbank_outcomemap');
+    $table->head = [
+        get_string('question'),
+        get_string('bulkexactversion', 'qbank_outcomemap'),
+        get_string('bulkproposedaction', 'qbank_outcomemap'),
+        get_string('validation', 'local_outcomemap'),
+    ];
+    foreach ($preview->questions as $question) {
+        $actions = [];
+        foreach ($question->actions as $action) {
+            if ($action->operation === question_mappings::BULK_ADD) {
+                $actions[] = get_string('bulkpreview_add', 'qbank_outcomemap', (object) [
+                    'outcome' => $action->outcome,
+                    'role' => get_string('mappingrole_' . $action->role, 'local_outcomemap'),
+                    'weight' => $action->weight ?? '—',
+                ]);
+            } else {
+                $previewkey = $action->operation;
+                if ($previewkey === question_mappings::BULK_SUBMIT_DRAFTS
+                        && !workflow::requires_independent_approval()) {
+                    $previewkey = 'finalize_drafts';
+                }
+                $actions[] = get_string('bulkpreview_' . $previewkey, 'qbank_outcomemap', (object) [
+                    'id' => $action->mappingid,
+                    'outcome' => $action->outcome,
+                    'role' => get_string('mappingrole_' . $action->role, 'local_outcomemap'),
+                    'weight' => $action->weight ?? '—',
+                ]);
+            }
+        }
+        $errors = $question->errors;
+        $table->data[] = [
+            $question->name,
+            get_string('bulkversionnumber', 'qbank_outcomemap', $question->questionversion),
+            $actions ? implode(html_writer::empty_tag('br'), array_map('s', $actions)) : '—',
+            $errors
+                ? html_writer::alist(array_map('s', $errors), ['class' => 'text-danger'])
+                : get_string('valid', 'local_outcomemap'),
+        ];
+    }
+    echo html_writer::table($table);
+    foreach ($preview->errors as $error) {
+        echo $OUTPUT->notification($error, \core\output\notification::NOTIFY_ERROR, false);
+    }
+}
+
+if ($confirmform) {
+    echo $OUTPUT->notification(get_string('bulkpreviewvalid', 'qbank_outcomemap'),
+        \core\output\notification::NOTIFY_SUCCESS, false);
+    $confirmform->display();
+} else if ($entryform) {
+    $entryform->display();
+} else {
+    $entryform = new bulk_map_form(null, $customdata);
+    $entryform->display();
+}
 echo $OUTPUT->footer();
