@@ -114,6 +114,12 @@ Feature: Governed outcomes are managed on exact question versions
     Then I should see "1 mapping(s) copied from the previous version as drafts."
     And I should see "Copied from question version 1, source mapping"
     And I should see "Draft"
+    # State-changing row actions must post, never render as GET links. Asserted
+    # here as well as in the @javascript scenario so the guard is verifiable
+    # without a JavaScript driver.
+    And "Submit for review" "button" should exist
+    And "Submit for review" "link" should not exist
+    And "Delete" "button" should exist
     When I click on "Submit for review" "button"
     Then I should see "Mapping submitted for review."
     And I should see "Needs review"

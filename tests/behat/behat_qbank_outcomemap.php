@@ -172,9 +172,17 @@ class behat_qbank_outcomemap extends behat_base {
             'questionversionid' => (int) $question->versionid,
             'status' => 'draft',
         ], MUST_EXIST);
-        $field = $this->getSession()->getPage()->find('css', 'input[name="mappingid"]');
+        // The row action buttons post, so they each carry their own hidden
+        // mappingid. Scope the tamper to the editor form itself via the mform
+        // marker, otherwise the first match is one of those buttons and the
+        // editor submits its untampered value.
+        $field = $this->getSession()->getPage()->find(
+            'xpath',
+            '//form[.//input[@name="_qf__qbank_outcomemap_form_mapping_form"]]'
+                . '//input[@name="mappingid"]'
+        );
         if (!$field) {
-            throw new RuntimeException('The hidden mappingid field was not found.');
+            throw new RuntimeException('The editor form hidden mappingid field was not found.');
         }
         $field->setValue((string) $mappingid);
     }
