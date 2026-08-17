@@ -145,11 +145,15 @@ class plugin_feature extends plugin_features_base {
         return true;
     }
 
-    /** Fail closed if an administrator has removed the required system-of-record plugin. */
+    /**
+     * Fail closed if the required system-of-record plugin is unavailable.
+     *
+     * @return bool
+     */
     protected function dependency_available(): bool {
         $directory = \core_component::get_component_directory('local_outcomemap');
         return !empty($directory)
-            && class_exists(\local_outcomemap\api\question_mappings::class)
-            && class_exists(\local_outcomemap\api\workflow::class);
+            && class_exists('local_outcomemap\\api\\question_mappings')
+            && class_exists('local_outcomemap\\api\\workflow');
     }
 }

@@ -26,14 +26,29 @@ use local_outcomemap\api\question_mapping_filters;
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 final class copied_condition extends binary_mapping_condition {
+    /**
+     * Return the copied-pending public API criterion.
+     *
+     * @return string
+     */
     protected static function criterion(): string {
         return question_mapping_filters::COPIED_PENDING;
     }
 
+    /**
+     * Return the stable filter key.
+     *
+     * @return string
+     */
     public static function get_condition_key() {
         return 'outcomemapcopiedpending';
     }
 
+    /**
+     * Return the localized filter title.
+     *
+     * @return string
+     */
     public function get_title() {
         return get_string('copiedfiltertitle', 'qbank_outcomemap');
     }

@@ -14,18 +14,34 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
 
-/** Per-question exact-version outcome mapping editor. */
+/**
+ * Per-question exact-version outcome mapping editor.
+ *
+ * @package    qbank_outcomemap
+ * @copyright  2026 Moodle Learning Outcome Mapping contributors
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
 
-// __DIR__ resolves symlinks, so when this plugin directory is symlinked into a
+// The __DIR__ constant resolves symlinks, so when this plugin directory is symlinked into a
 // Moodle install (a common dev setup) it points at the checkout rather than at
 // question/bank/outcomemap, and the relative path above lands outside the site.
 // SCRIPT_FILENAME keeps the unresolved request path, so it still finds config.
+// phpcs:ignore moodle.Files.MoodleInternal.MoodleInternalGlobalState -- Resolves config before Moodle is loaded.
 $configfile = __DIR__ . '/../../../config.php';
-if (!file_exists($configfile) && !empty($_SERVER['SCRIPT_FILENAME'])) {
-    $fallback = dirname($_SERVER['SCRIPT_FILENAME'], 4) . '/config.php';
-    if (file_exists($fallback)) {
+if (!is_file($configfile)) {
+    $scriptfilename = filter_input(INPUT_SERVER, 'SCRIPT_FILENAME', FILTER_UNSAFE_RAW);
+    $resolvedscript = is_string($scriptfilename) ? realpath($scriptfilename) : false;
+    if ($resolvedscript !== false && $resolvedscript === realpath(__FILE__)) {
+        $fallbackroot = dirname($scriptfilename, 4);
+        $fallback = $fallbackroot . '/config.php';
+    }
+    if (isset($fallback) && is_file($fallback) && is_file($fallbackroot . '/lib/setup.php')) {
         $configfile = $fallback;
     }
+}
+if (!is_file($configfile)) {
+    http_response_code(500);
+    exit('Moodle configuration could not be located.');
 }
 require_once($configfile);
 require_once($CFG->libdir . '/questionlib.php');
@@ -36,15 +52,16 @@ use local_outcomemap\api\question_mappings;
 use local_outcomemap\api\validation_exception;
 use local_outcomemap\api\workflow;
 use qbank_outcomemap\form\mapping_form;
+use qbank_outcomemap\local\access;
 use qbank_outcomemap\local\bank\outcome_column;
-
 $questionid = required_param('id', PARAM_INT);
 $returnurl = optional_param('returnurl', '', PARAM_LOCALURL);
 $action = optional_param('action', '', PARAM_ALPHA);
 $mappingid = optional_param('mappingid', 0, PARAM_INT);
 $editmappingid = optional_param('editmappingid', 0, PARAM_INT);
 $confirmed = optional_param('confirm', 0, PARAM_BOOL);
-
+// Authenticate before resolving user-supplied record identifiers.
+require_login();
 $questionversion = $DB->get_record('question_versions', ['questionid' => $questionid], '*', MUST_EXIST);
 $question = $DB->get_record('question', ['id' => $questionid], 'id,name', MUST_EXIST);
 $context = context_resolver::for_question_version((int) $questionversion->id);
@@ -55,8 +72,6 @@ if ($context instanceof context_module) {
     require_login((int) $cm->course, false, $cm);
 } else if ($context instanceof context_course) {
     require_login((int) $context->instanceid);
-} else {
-    require_login();
 }
 \core_question\local\bank\helper::require_plugin_enabled('qbank_outcomemap');
 
@@ -70,12 +85,14 @@ $PAGE->set_pagelayout('admin');
 $PAGE->set_title(get_string('managemappings', 'qbank_outcomemap'));
 $PAGE->set_heading(get_string('managemappings', 'qbank_outcomemap'));
 
-require_capability('local/outcomemap:viewdefinitions', $context);
-require_capability('local/outcomemap:mapquestions', $context);
-if (!question_has_capability_on($questionid, 'edit')) {
-    throw new required_capability_exception($context, 'moodle/question:editall', 'nopermissions', '');
+access::require_question_edit_access($context, $questionid);
+$allowedactions = ['deletedraft', 'submitreview', 'copyprevious'];
+if ($action !== '' && !in_array($action, $allowedactions, true)) {
+    throw new invalid_parameter_exception(get_string('invalidmappingaction', 'qbank_outcomemap'));
 }
-
+if (in_array($action, ['deletedraft', 'submitreview'], true) && !$mappingid) {
+    throw new invalid_parameter_exception(get_string('missingmappingid', 'qbank_outcomemap'));
+}
 // Load once and constrain every row action to this exact question version.
 $grouped = question_mappings::get_for_question_versions([(int) $questionversion->id]);
 $mappings = $grouped[(int) $questionversion->id] ?? [];
@@ -84,13 +101,14 @@ foreach ($mappings as $mapping) {
     $mappingsbyid[$mapping->id] = $mapping;
 }
 if ($action !== '' && $mappingid && !isset($mappingsbyid[$mappingid])) {
-    throw new invalid_parameter_exception('The mapping does not belong to this exact question version.');
+    throw new invalid_parameter_exception(get_string('mappingnotexactversion', 'qbank_outcomemap'));
 }
-if ($editmappingid && (!isset($mappingsbyid[$editmappingid])
-        || $mappingsbyid[$editmappingid]->status !== workflow::DRAFT)) {
-    throw new invalid_parameter_exception('Only a draft mapping from this exact question version can be edited.');
+if (
+    $editmappingid && (!isset($mappingsbyid[$editmappingid])
+        || $mappingsbyid[$editmappingid]->status !== workflow::DRAFT)
+) {
+    throw new invalid_parameter_exception(get_string('editdraftonly', 'qbank_outcomemap'));
 }
-
 $copypreview = null;
 if ((int) $questionversion->version > 1) {
     $copypreview = question_mappings::preview_copy_to_version((int) $questionversion->id);
@@ -98,6 +116,7 @@ if ((int) $questionversion->version > 1) {
 
 // Sesskey-protected row actions delegated to the public system-of-record API.
 if ($action !== '') {
+    access::require_post_action();
     require_sesskey();
     if ($action === 'deletedraft' && $mappingid && !$confirmed) {
         echo $OUTPUT->header();
@@ -120,16 +139,22 @@ if ($action !== '') {
             case 'deletedraft':
                 question_mappings::delete_draft($mappingid, get_string('deletedfromeditor', 'qbank_outcomemap'));
                 redirect($pageurl, get_string('mappingdeleted', 'qbank_outcomemap'));
+                break;
             case 'submitreview':
                 question_mappings::submit_for_review($mappingid);
                 redirect($pageurl, get_string(
                     workflow::requires_independent_approval() ? 'mappingsubmitted' : 'mappingfinalized',
                     'qbank_outcomemap'
                 ));
+                break;
             case 'copyprevious':
                 if (!$copypreview || !$copypreview->eligiblecount) {
-                    redirect($pageurl, get_string('copynothingeligible', 'qbank_outcomemap'), null,
-                        \core\output\notification::NOTIFY_WARNING);
+                    redirect(
+                        $pageurl,
+                        get_string('copynothingeligible', 'qbank_outcomemap'),
+                        null,
+                        \core\output\notification::NOTIFY_WARNING
+                    );
                 }
                 $created = question_mappings::copy_to_version(
                     (int) $questionversion->id,
@@ -137,9 +162,10 @@ if ($action !== '') {
                     get_string('copiedfromqbank', 'qbank_outcomemap')
                 );
                 redirect($pageurl, get_string('mappingscopied', 'qbank_outcomemap', count($created)));
+                break;
         }
     } catch (validation_exception $e) {
-        redirect($pageurl, $e->getMessage(), null, \core\output\notification::NOTIFY_ERROR);
+        redirect($pageurl, s($e->getMessage()), null, \core\output\notification::NOTIFY_ERROR);
     }
 }
 
@@ -178,16 +204,18 @@ if ($form->is_cancelled()) {
 if ($data = $form->get_data()) {
     try {
         $submittedmappingid = (int) ($data->mappingid ?? 0);
-        if ($submittedmappingid !== $editmappingid
+        if (
+            $submittedmappingid !== $editmappingid
                 || ($submittedmappingid && (!isset($mappingsbyid[$submittedmappingid])
-                    || $mappingsbyid[$submittedmappingid]->status !== workflow::DRAFT))) {
-            throw new invalid_parameter_exception(
-                'The submitted draft does not match the exact-version mapping selected for editing.'
-            );
+                    || $mappingsbyid[$submittedmappingid]->status !== workflow::DRAFT))
+        ) {
+            throw new invalid_parameter_exception(get_string('invalidsubmittedmapping', 'qbank_outcomemap'));
         }
         $weight = trim((string) ($data->weight ?? ''));
         $notes = trim((string) ($data->notes ?? ''));
         $reviewmessage = trim((string) ($data->reviewmessage ?? ''));
+        $effectiveat = $editmapping ? (int) $editmapping->effectivefrom : time();
+        access::require_visible_outcome($context, (string) $data->outcomeversionuuid, $effectiveat);
         if (!empty($data->mappingid)) {
             question_mappings::update_draft((int) $data->mappingid, [
                 'outcomeversionuuid' => (string) $data->outcomeversionuuid,
@@ -220,7 +248,7 @@ if ($data = $form->get_data()) {
         }
         redirect($pageurl, $savedmessage);
     } catch (validation_exception $e) {
-        redirect($pageurl, $e->getMessage(), null, \core\output\notification::NOTIFY_ERROR);
+        redirect($pageurl, s($e->getMessage()), null, \core\output\notification::NOTIFY_ERROR);
     }
 }
 
@@ -257,10 +285,6 @@ echo $OUTPUT->notification(implode(' · ', $reportitems), $reporttype, false);
 
 if ($mappings) {
     $table = new html_table();
-    $table->caption = get_string('mappingtablecaption', 'qbank_outcomemap', (object) [
-        'question' => format_string($question->name),
-        'version' => (int) $questionversion->version,
-    ]);
     $table->head = [
         get_string(
             workflow::requires_independent_approval() ? 'outcome' : 'outcome_finalization',
@@ -272,7 +296,10 @@ if ($mappings) {
         get_string('actions', 'local_outcomemap'),
     ];
     $table->attributes['class'] = 'generaltable';
-    $table->caption = get_string('mappingtablecaption', 'qbank_outcomemap', format_string($question->name, true, ['context' => $context]));
+    $table->caption = get_string('mappingtablecaption', 'qbank_outcomemap', (object) [
+        'question' => format_string($question->name, true, ['context' => $context]),
+        'version' => (int) $questionversion->version,
+    ]);
     foreach ($mappings as $mapping) {
         $actions = [];
         if ($mapping->status === workflow::DRAFT) {
@@ -314,14 +341,20 @@ if ($mappings) {
     }
     echo html_writer::div(html_writer::table($table), 'table-responsive');
 } else {
-    echo $OUTPUT->notification(get_string('nomappings', 'qbank_outcomemap'),
-        \core\output\notification::NOTIFY_INFO, false);
+    echo $OUTPUT->notification(
+        get_string('nomappings', 'qbank_outcomemap'),
+        \core\output\notification::NOTIFY_INFO,
+        false
+    );
 }
 
 if ($copypreview && $copypreview->sourcequestionversionid !== null) {
     if ($copypreview->eligiblecount > 0) {
-        echo $OUTPUT->heading(get_string('copypreviewheading', 'qbank_outcomemap',
-            $copypreview->sourceversion), 4);
+        echo $OUTPUT->heading(get_string(
+            'copypreviewheading',
+            'qbank_outcomemap',
+            $copypreview->sourceversion
+        ), 4);
         echo $OUTPUT->notification(get_string(
             workflow::requires_independent_approval() ? 'copypreviewnote' : 'copypreviewnote_finalization',
             'qbank_outcomemap',
@@ -329,8 +362,11 @@ if ($copypreview && $copypreview->sourcequestionversionid !== null) {
         ), \core\output\notification::NOTIFY_INFO, false);
         $copytable = new html_table();
         $copytable->attributes['class'] = 'generaltable';
-        $copytable->caption = get_string('copypreviewtablecaption', 'qbank_outcomemap',
-            $copypreview->sourceversion);
+        $copytable->caption = get_string(
+            'copypreviewtablecaption',
+            'qbank_outcomemap',
+            $copypreview->sourceversion
+        );
         $copytable->head = [
             get_string(
                 workflow::requires_independent_approval() ? 'outcome' : 'outcome_finalization',
@@ -351,15 +387,20 @@ if ($copypreview && $copypreview->sourcequestionversionid !== null) {
             'action' => 'copyprevious', 'sesskey' => sesskey(),
         ]), get_string('copyfromprevious', 'qbank_outcomemap'), 'post');
     } else if ($copypreview->duplicatecount > 0) {
-        echo $OUTPUT->notification(get_string('copyalreadycomplete', 'qbank_outcomemap'),
-            \core\output\notification::NOTIFY_INFO, false);
+        echo $OUTPUT->notification(
+            get_string('copyalreadycomplete', 'qbank_outcomemap'),
+            \core\output\notification::NOTIFY_INFO,
+            false
+        );
     }
 }
 
 $form->display();
 
 if ($returnurl !== '') {
-    echo html_writer::div(html_writer::link(new moodle_url($returnurl),
-        get_string('backtoquestionbank', 'qbank_outcomemap')), 'mt-3');
+    echo html_writer::div(html_writer::link(
+        new moodle_url($returnurl),
+        get_string('backtoquestionbank', 'qbank_outcomemap')
+    ), 'mt-3');
 }
 echo $OUTPUT->footer();

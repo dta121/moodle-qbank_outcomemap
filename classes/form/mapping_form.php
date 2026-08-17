@@ -22,12 +22,23 @@ defined('MOODLE_INTERNAL') || die();
 
 require_once($CFG->libdir . '/formslib.php');
 
-/** Draft question-mapping create/edit form with explicit finalization. */
+/**
+ * Draft question-mapping create/edit form with explicit finalization.
+ *
+ * @package    qbank_outcomemap
+ * @copyright  2026 Moodle Learning Outcome Mapping contributors
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
 class mapping_form extends \moodleform {
-    /** Define the form fields. */
+    /**
+     * Define the form fields.
+     */
     protected function definition(): void {
         $mform = $this->_form;
-        $outcomes = $this->_customdata['outcomes'] ?? [];
+        $outcomes = array_map(
+            static fn($label): string => s((string) $label),
+            $this->_customdata['outcomes'] ?? []
+        );
         $mappingid = (int) ($this->_customdata['mappingid'] ?? 0);
         $finalizationmode = !workflow::requires_independent_approval();
 
@@ -47,8 +58,13 @@ class mapping_form extends \moodleform {
             'qbank_outcomemap'
         ));
 
-        $mform->addElement('select', 'outcomeversionuuid',
-            get_string($finalizationmode ? 'outcome_finalization' : 'outcome', 'qbank_outcomemap'), $outcomes);
+        $mform->addElement(
+            'select',
+            'outcomeversionuuid',
+            get_string($finalizationmode ? 'outcome_finalization' : 'outcome', 'qbank_outcomemap'),
+            $outcomes
+        );
+        $mform->setType('outcomeversionuuid', PARAM_ALPHANUMEXT);
         $mform->addRule('outcomeversionuuid', null, 'required', null, 'client');
 
         $roles = [];
@@ -56,6 +72,7 @@ class mapping_form extends \moodleform {
             $roles[$role] = get_string('mappingrole_' . $role, 'local_outcomemap');
         }
         $mform->addElement('select', 'role', get_string('mappingrole', 'local_outcomemap'), $roles);
+        $mform->setType('role', PARAM_ALPHAEXT);
         $mform->setDefault('role', 'alignment_only');
 
         $mform->addElement('text', 'weight', get_string('assessedweight', 'qbank_outcomemap'), ['size' => 16]);
@@ -70,8 +87,12 @@ class mapping_form extends \moodleform {
         $mform->addElement('textarea', 'notes', get_string('notes', 'local_outcomemap'), ['rows' => 3]);
         $mform->setType('notes', PARAM_TEXT);
         $reviewmessagestring = $finalizationmode ? 'reviewmessage_finalization' : 'reviewmessage';
-        $mform->addElement('textarea', 'reviewmessage',
-            get_string($reviewmessagestring, 'qbank_outcomemap'), ['rows' => 2]);
+        $mform->addElement(
+            'textarea',
+            'reviewmessage',
+            get_string($reviewmessagestring, 'qbank_outcomemap'),
+            ['rows' => 2]
+        );
         $mform->setType('reviewmessage', PARAM_TEXT);
         $mform->addHelpButton('reviewmessage', $reviewmessagestring, 'qbank_outcomemap');
 
@@ -99,14 +120,26 @@ class mapping_form extends \moodleform {
         if ((int) ($data['mappingid'] ?? 0) !== $expectedmappingid) {
             $errors['outcomeversionuuid'] = get_string('invalidmappingedit', 'qbank_outcomemap');
         }
+        if (empty($data['outcomeversionuuid'])) {
+            $errors['outcomeversionuuid'] = get_string('required');
+        }
+        $roles = ['teaches', 'practices', 'assesses', 'remediates', 'alignment_only'];
+        $role = clean_param((string) ($data['role'] ?? ''), PARAM_ALPHAEXT);
+        if (!in_array($role, $roles, true)) {
+            $errors['role'] = get_string('invalidmappingrole', 'local_outcomemap');
+            return $errors;
+        }
         $weight = trim((string) ($data['weight'] ?? ''));
-        if (($data['role'] ?? '') === 'assesses') {
+        if ($role === 'assesses') {
             if ($weight === '') {
                 $errors['weight'] = get_string('assessedweightrequired', 'local_outcomemap');
             }
         } else if ($weight !== '') {
-            $errors['weight'] = get_string('weightnotallowedforrole', 'local_outcomemap',
-                (object) ['field' => 'weight', 'detail' => $data['role'] ?? '']);
+            $errors['weight'] = get_string(
+                'weightnotallowedforrole',
+                'local_outcomemap',
+                (object) ['field' => 'weight', 'detail' => $role]
+            );
         }
         return $errors;
     }

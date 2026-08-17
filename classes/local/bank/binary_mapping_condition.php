@@ -26,22 +26,47 @@ use core\output\datafilter;
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 abstract class binary_mapping_condition extends mapping_condition {
+    /**
+     * Return the core binary filter class.
+     *
+     * @return string
+     */
     public function get_filter_class() {
         return 'core/datafilter/filtertypes/binary';
     }
 
+    /**
+     * Disallow multiple selected values.
+     *
+     * @return bool
+     */
     public function allow_multiple() {
         return false;
     }
 
+    /**
+     * Disallow custom filter values.
+     *
+     * @return bool
+     */
     public function allow_custom() {
         return false;
     }
 
+    /**
+     * Return the supported filter join types.
+     *
+     * @return int[]
+     */
     public function get_join_list(): array {
         return [datafilter::JOINTYPE_ANY];
     }
 
+    /**
+     * Return the localized yes/no options.
+     *
+     * @return \stdClass[]
+     */
     public function get_initial_values() {
         $selected = $this->selectedvalues === [] ? null : (int) reset($this->selectedvalues);
         return [

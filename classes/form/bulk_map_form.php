@@ -31,10 +31,19 @@ use local_outcomemap\api\workflow;
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class bulk_map_form extends \moodleform {
-    /** Define the form fields. */
+    /** Canonical mapping roles accepted by the public service. */
+    private const ROLES = ['alignment_only', 'teaches', 'practices', 'assesses', 'remediates'];
+
+    /**
+     * Define the form fields.
+     */
     protected function definition(): void {
         $mform = $this->_form;
         $finalizationmode = !workflow::requires_independent_approval();
+        $outcomes = array_map(
+            static fn($label): string => s((string) $label),
+            $this->_customdata['outcomes'] ?? []
+        );
         $this->add_routing_fields();
 
         if (!empty($this->_customdata['confirmed'])) {
@@ -43,6 +52,25 @@ class bulk_map_form extends \moodleform {
         }
 
         $questions = $this->_customdata['questions'] ?? [];
+        $this->add_operation_fields($outcomes, $finalizationmode);
+        $this->add_question_weight_fields($questions);
+        if ($this->add_draft_fields($questions) === 0) {
+            $mform->addElement('static', 'nodrafts', '', get_string(
+                $finalizationmode ? 'bulknodrafts_finalization' : 'bulknodrafts',
+                'qbank_outcomemap'
+            ));
+        }
+        $this->add_action_buttons(true, get_string('bulkpreview', 'qbank_outcomemap'));
+    }
+
+    /**
+     * Add the operation, outcome, role, notes, and weight-section controls.
+     *
+     * @param array $outcomes Escaped outcome labels keyed by exact version UUID.
+     * @param bool $finalizationmode Whether approval is disabled.
+     */
+    private function add_operation_fields(array $outcomes, bool $finalizationmode): void {
+        $mform = $this->_form;
         $mform->addElement('static', 'bulknote', '', get_string(
             $finalizationmode ? 'bulkmapnote_finalization' : 'bulkmapnote',
             'qbank_outcomemap'
@@ -64,13 +92,13 @@ class bulk_map_form extends \moodleform {
             'select',
             'outcomeversionuuid',
             get_string($finalizationmode ? 'outcome_finalization' : 'outcome', 'qbank_outcomemap'),
-            $this->_customdata['outcomes'] ?? []
+            $outcomes
         );
         $mform->setType('outcomeversionuuid', PARAM_ALPHANUMEXT);
         $mform->hideIf('outcomeversionuuid', 'operation', 'neq', question_mappings::BULK_ADD);
 
         $roles = [];
-        foreach (['alignment_only', 'teaches', 'practices', 'assesses', 'remediates'] as $role) {
+        foreach (self::ROLES as $role) {
             $roles[$role] = get_string('mappingrole_' . $role, 'local_outcomemap');
         }
         $mform->addElement('select', 'role', get_string('mappingrole', 'local_outcomemap'), $roles);
@@ -85,8 +113,21 @@ class bulk_map_form extends \moodleform {
         $mform->setType('reason', PARAM_TEXT);
 
         $mform->addElement('header', 'questionweights', get_string('bulkquestionweights', 'qbank_outcomemap'));
-        $mform->addElement('static', 'questionweightsnote', '',
-            get_string('bulkquestionweights_help', 'qbank_outcomemap'));
+        $mform->addElement(
+            'static',
+            'questionweightsnote',
+            '',
+            get_string('bulkquestionweights_help', 'qbank_outcomemap')
+        );
+    }
+
+    /**
+     * Add explicit per-question assessed-weight controls.
+     *
+     * @param \stdClass[] $questions Authorized exact question summaries.
+     */
+    private function add_question_weight_fields(array $questions): void {
+        $mform = $this->_form;
         foreach ($questions as $question) {
             $field = 'questionweight_' . (int) $question->questionid;
             $mform->addElement('text', $field, get_string('bulkquestionweight', 'qbank_outcomemap', (object) [
@@ -96,16 +137,26 @@ class bulk_map_form extends \moodleform {
             $mform->setType($field, PARAM_RAW_TRIMMED);
             $mform->hideIf($field, 'operation', 'neq', question_mappings::BULK_ADD);
         }
+    }
 
+    /**
+     * Add the authorized draft selection and role-change weight controls.
+     *
+     * @param \stdClass[] $questions Authorized exact question summaries.
+     * @return int Number of draft controls added.
+     */
+    private function add_draft_fields(array $questions): int {
+        $mform = $this->_form;
         $mform->addElement('header', 'draftselection', get_string('bulkdraftselection', 'qbank_outcomemap'));
         $draftcount = 0;
         foreach ($questions as $question) {
             foreach ($question->drafts as $draft) {
                 $draftcount++;
+                $draftoutcome = s((string) $draft->outcome);
                 $label = get_string('bulkdraftlabel', 'qbank_outcomemap', (object) [
                     'question' => $question->name,
                     'version' => $question->questionversion,
-                    'outcome' => $draft->outcome,
+                    'outcome' => $draftoutcome,
                     'role' => get_string('mappingrole_' . $draft->role, 'local_outcomemap'),
                 ]);
                 $field = 'mapping_' . (int) $draft->id;
@@ -113,13 +164,16 @@ class bulk_map_form extends \moodleform {
                 $mform->setType($field, PARAM_BOOL);
                 $mform->hideIf($field, 'operation', 'eq', question_mappings::BULK_ADD);
                 $weightfield = 'mappingweight_' . (int) $draft->id;
-                $mform->addElement('text', $weightfield,
+                $mform->addElement(
+                    'text',
+                    $weightfield,
                     get_string('bulkmappingweight', 'qbank_outcomemap', (object) [
                         'question' => $question->name,
                         'version' => $question->questionversion,
-                        'outcome' => $draft->outcome,
+                        'outcome' => $draftoutcome,
                         'role' => get_string('mappingrole_' . $draft->role, 'local_outcomemap'),
-                    ]));
+                    ])
+                );
                 $mform->setType($weightfield, PARAM_RAW_TRIMMED);
                 $mform->hideIf(
                     $weightfield,
@@ -129,14 +183,7 @@ class bulk_map_form extends \moodleform {
                 );
             }
         }
-        if (!$draftcount) {
-            $mform->addElement('static', 'nodrafts', '', get_string(
-                $finalizationmode ? 'bulknodrafts_finalization' : 'bulknodrafts',
-                'qbank_outcomemap'
-            ));
-        }
-
-        $this->add_action_buttons(true, get_string('bulkpreview', 'qbank_outcomemap'));
+        return $draftcount;
     }
 
     /**
@@ -151,45 +198,102 @@ class bulk_map_form extends \moodleform {
         $action = (string) ($data['operation'] ?? '');
         $role = (string) ($data['role'] ?? '');
         $questions = $this->_customdata['questions'] ?? [];
-        if ($action === question_mappings::BULK_ADD) {
-            if (empty($data['outcomeversionuuid'])) {
-                $errors['outcomeversionuuid'] = get_string('required');
-            }
-            if ($role === 'assesses') {
-                foreach ($questions as $question) {
-                    $field = 'questionweight_' . (int) $question->questionid;
-                    if (trim((string) ($data[$field] ?? '')) === '') {
-                        $errors[$field] = get_string('assessedweightrequired', 'local_outcomemap');
-                    }
-                }
-            }
+        $actions = [
+            question_mappings::BULK_ADD,
+            question_mappings::BULK_CHANGE_ROLE,
+            question_mappings::BULK_DELETE_DRAFTS,
+            question_mappings::BULK_SUBMIT_DRAFTS,
+        ];
+        if (!in_array($action, $actions, true)) {
+            $errors['operation'] = get_string('invalidbulkoperation', 'qbank_outcomemap');
             return $errors;
         }
-
-        $selected = [];
-        foreach ($questions as $question) {
-            foreach ($question->drafts as $draft) {
-                $field = 'mapping_' . (int) $draft->id;
-                if (!empty($data[$field])) {
-                    $selected[] = $draft;
-                }
-            }
+        if (
+            ($action === question_mappings::BULK_ADD || $action === question_mappings::BULK_CHANGE_ROLE)
+                && !in_array($role, self::ROLES, true)
+        ) {
+            $errors['role'] = get_string('invalidmappingrole', 'local_outcomemap');
+            return $errors;
         }
+        if ($action === question_mappings::BULK_ADD) {
+            return $this->validate_add_operation($data, $questions, $role, $errors);
+        }
+
+        $selected = $this->selected_drafts($data, $questions);
         if (!$selected) {
             $errors['operation'] = get_string('bulkmappingrequired', 'qbank_outcomemap');
         }
         if ($action === question_mappings::BULK_CHANGE_ROLE && $role === 'assesses') {
-            foreach ($selected as $draft) {
-                $field = 'mappingweight_' . (int) $draft->id;
-                if (trim((string) ($data[$field] ?? '')) === '') {
-                    $errors[$field] = get_string('assessedweightrequired', 'local_outcomemap');
-                }
+            $errors = $this->require_draft_weights($data, $selected, $errors);
+        }
+        return $errors;
+    }
+
+    /**
+     * Validate an add operation's required outcome and assessed weights.
+     *
+     * @param array $data Submitted values.
+     * @param \stdClass[] $questions Authorized exact question summaries.
+     * @param string $role Submitted canonical role.
+     * @param array $errors Existing form errors.
+     * @return array Field errors.
+     */
+    private function validate_add_operation(array $data, array $questions, string $role, array $errors): array {
+        if (empty($data['outcomeversionuuid'])) {
+            $errors['outcomeversionuuid'] = get_string('required');
+        }
+        if ($role !== 'assesses') {
+            return $errors;
+        }
+        foreach ($questions as $question) {
+            $field = 'questionweight_' . (int) $question->questionid;
+            if (trim((string) ($data[$field] ?? '')) === '') {
+                $errors[$field] = get_string('assessedweightrequired', 'local_outcomemap');
             }
         }
         return $errors;
     }
 
-    /** Add hidden routing values shared by both stages. */
+    /**
+     * Return only server-supplied drafts selected by the submitted controls.
+     *
+     * @param array $data Submitted values.
+     * @param \stdClass[] $questions Authorized exact question summaries.
+     * @return \stdClass[] Selected public draft summaries.
+     */
+    private function selected_drafts(array $data, array $questions): array {
+        $selected = [];
+        foreach ($questions as $question) {
+            foreach ($question->drafts as $draft) {
+                if (!empty($data['mapping_' . (int) $draft->id])) {
+                    $selected[] = $draft;
+                }
+            }
+        }
+        return $selected;
+    }
+
+    /**
+     * Require explicit weights for selected drafts changing to assesses.
+     *
+     * @param array $data Submitted values.
+     * @param \stdClass[] $selected Selected public draft summaries.
+     * @param array $errors Existing form errors.
+     * @return array Field errors.
+     */
+    private function require_draft_weights(array $data, array $selected, array $errors): array {
+        foreach ($selected as $draft) {
+            $field = 'mappingweight_' . (int) $draft->id;
+            if (trim((string) ($data[$field] ?? '')) === '') {
+                $errors[$field] = get_string('assessedweightrequired', 'local_outcomemap');
+            }
+        }
+        return $errors;
+    }
+
+    /**
+     * Add hidden routing values shared by both stages.
+     */
     private function add_routing_fields(): void {
         $mform = $this->_form;
         $mform->addElement('hidden', 'questionids', $this->_customdata['questionids'] ?? '');
@@ -202,7 +306,9 @@ class bulk_map_form extends \moodleform {
         $mform->setType('returnurl', PARAM_LOCALURL);
     }
 
-    /** Add immutable operation values for the explicit commit stage. */
+    /**
+     * Add immutable operation values for the explicit commit stage.
+     */
     private function add_confirmation_fields(): void {
         $mform = $this->_form;
         $preview = $this->_customdata['preview'];
@@ -219,10 +325,21 @@ class bulk_map_form extends \moodleform {
             'notes' => $operation['notes'] ?? '',
             'reason' => $operation['reason'] ?? '',
         ];
+        $types = [
+            'confirmed' => PARAM_BOOL,
+            'previewtoken' => PARAM_ALPHANUM,
+            'operation' => PARAM_ALPHAEXT,
+            'role' => PARAM_ALPHAEXT,
+            'outcomeversionuuid' => PARAM_ALPHANUMEXT,
+            'effectivefrom' => PARAM_INT,
+            'mappingids' => PARAM_SEQUENCE,
+            'weightsjson' => PARAM_RAW_TRIMMED,
+            'notes' => PARAM_TEXT,
+            'reason' => PARAM_TEXT,
+        ];
         foreach ($hidden as $name => $value) {
             $mform->addElement('hidden', $name, $value);
-            $mform->setType($name, in_array($name, ['notes', 'reason', 'weightsjson'], true)
-                ? PARAM_RAW : PARAM_RAW_TRIMMED);
+            $mform->setType($name, $types[$name]);
         }
         $mform->addElement('static', 'confirmnote', '', get_string('bulkconfirmnote', 'qbank_outcomemap'));
         $this->add_action_buttons(true, get_string('bulkcommit', 'qbank_outcomemap'));

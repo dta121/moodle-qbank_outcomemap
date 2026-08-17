@@ -123,7 +123,12 @@ class behat_qbank_outcomemap extends behat_base {
         ))->out(false));
     }
 
-    /** Return the version-appropriate route to a course's question bank. */
+    /**
+     * Return the version-appropriate route to a course's question bank.
+     *
+     * @param int $courseid Core course ID.
+     * @return array
+     */
     private function question_bank_route_params(int $courseid): array {
         global $DB;
         $qbankmoduleid = $DB->get_field('modules', 'id', ['name' => 'qbank']);
@@ -140,7 +145,12 @@ class behat_qbank_outcomemap extends behat_base {
         return ['courseid' => $courseid];
     }
 
-    /** Return the newest question row/version for a display name. */
+    /**
+     * Return the newest question row/version for a display name.
+     *
+     * @param string $name Question display name.
+     * @return \stdClass
+     */
     private function latest_question(string $name): \stdClass {
         global $DB;
         $records = $DB->get_records_sql(
@@ -223,7 +233,12 @@ class behat_qbank_outcomemap extends behat_base {
         }
     }
 
-    /** Normalize a Behat role label. */
+    /**
+     * Normalize a Behat role label.
+     *
+     * @param string $role Human-readable or canonical role.
+     * @return string
+     */
     private function normalize_role(string $role): string {
         $normalized = strtolower(str_replace([' ', '-'], '_', trim($role)));
         $roles = [

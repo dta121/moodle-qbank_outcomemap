@@ -35,15 +35,31 @@ final class status_condition extends mapping_condition {
         workflow::RETIRED,
     ];
 
+    /**
+     * Return the mapping-status public API criterion.
+     *
+     * @return string
+     */
     protected static function criterion(): string {
         return question_mapping_filters::STATUS;
     }
 
+    /**
+     * Normalize data-filter indexes to canonical workflow states.
+     *
+     * @param array $filter Core filter data.
+     * @return array
+     */
     protected static function normalize_filter(array $filter): array {
         $values = [];
         foreach ($filter['values'] ?? [] as $value) {
-            if ((is_int($value) || ctype_digit((string) $value))
-                    && array_key_exists((int) $value, self::VALUES)) {
+            if (!is_scalar($value)) {
+                continue;
+            }
+            if (
+                (is_int($value) || ctype_digit((string) $value))
+                    && array_key_exists((int) $value, self::VALUES)
+            ) {
                 $values[] = self::VALUES[(int) $value];
             } else if (in_array($value, self::VALUES, true)) {
                 // Preserve compatibility with canonical values in saved URLs and server-side callers.
@@ -54,22 +70,47 @@ final class status_condition extends mapping_condition {
         return $filter;
     }
 
+    /**
+     * Return the stable filter key.
+     *
+     * @return string
+     */
     public static function get_condition_key() {
         return 'outcomemapstatus';
     }
 
+    /**
+     * Return the localized filter title.
+     *
+     * @return string
+     */
     public function get_title() {
         return get_string('statusfiltertitle', 'qbank_outcomemap');
     }
 
+    /**
+     * Use Moodle's default discrete-value filter.
+     *
+     * @return null
+     */
     public function get_filter_class() {
         return null;
     }
 
+    /**
+     * Disallow custom filter values.
+     *
+     * @return bool
+     */
     public function allow_custom() {
         return false;
     }
 
+    /**
+     * Return the available workflow-state options.
+     *
+     * @return \stdClass[]
+     */
     public function get_initial_values() {
         $values = [];
         foreach (self::VALUES as $index => $status) {

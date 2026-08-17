@@ -31,7 +31,11 @@ abstract class mapping_condition extends condition {
     /** @var array Values currently selected in the filter UI. */
     protected $selectedvalues = [];
 
-    /** Return the public API criterion handled by this condition. */
+    /**
+     * Return the public API criterion handled by this condition.
+     *
+     * @return string
+     */
     abstract protected static function criterion(): string;
 
     /**
@@ -45,11 +49,12 @@ abstract class mapping_condition extends condition {
         }
         $filters = (array) ($qbank->get_pagevars('filter') ?? []);
         $this->filter = static::get_filter_from_list($filters);
-        $this->selectedvalues = $this->filter['values'] ?? [];
         if ($this->filter) {
+            $this->filter = static::normalize_filter($this->filter);
+            $this->selectedvalues = $this->filter['values'] ?? [];
             [$this->where, $this->params] = question_mapping_filters::build(
                 static::criterion(),
-                static::normalize_filter($this->filter),
+                $this->filter,
                 $qbank->contexts->all()
             );
         }
@@ -82,12 +87,20 @@ abstract class mapping_condition extends condition {
         );
     }
 
-    /** Explicit compatibility default required by the accepted ADR. */
+    /**
+     * Return the compatibility default required by the accepted ADR.
+     *
+     * @return array
+     */
     public function get_initial_values() {
         return [];
     }
 
-    /** Explicit compatibility default required by the accepted ADR. */
+    /**
+     * Return the compatibility filter options required by the accepted ADR.
+     *
+     * @return \stdClass
+     */
     public function get_filteroptions(): \stdClass {
         return (object) [];
     }

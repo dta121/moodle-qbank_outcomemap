@@ -108,6 +108,7 @@ class outcome_column extends column_base {
      * @param string $rowclasses Row CSS classes.
      */
     protected function display_content($question, $rowclasses): void {
+        unset($rowclasses); // Required by the cross-version core method signature.
         $mappings = $this->mappingsbyversion[(int) ($question->versionid ?? 0)] ?? [];
         $parts = [];
         foreach ($mappings as $mapping) {
@@ -130,7 +131,7 @@ class outcome_column extends column_base {
                 : ' qbank-outcomemap-alignment';
             $class = ($statusclasses[$mapping->status] ?? 'badge bg-secondary text-white') . $roleclass;
             $parts[] = \html_writer::span(s($text), $class, [
-                'title' => s($mapping->outcomeshortstatement ?? $mapping->outcomestatement),
+                'title' => $mapping->outcomeshortstatement ?? $mapping->outcomestatement,
             ]);
         }
         if (!$parts) {

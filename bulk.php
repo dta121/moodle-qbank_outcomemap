@@ -22,16 +22,26 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
-// __DIR__ resolves symlinks, so when this plugin directory is symlinked into a
+// The __DIR__ constant resolves symlinks, so when this plugin directory is symlinked into a
 // Moodle install (a common dev setup) it points at the checkout rather than at
 // question/bank/outcomemap, and the relative path above lands outside the site.
 // SCRIPT_FILENAME keeps the unresolved request path, so it still finds config.
+// phpcs:ignore moodle.Files.MoodleInternal.MoodleInternalGlobalState -- Resolves config before Moodle is loaded.
 $configfile = __DIR__ . '/../../../config.php';
-if (!file_exists($configfile) && !empty($_SERVER['SCRIPT_FILENAME'])) {
-    $fallback = dirname($_SERVER['SCRIPT_FILENAME'], 4) . '/config.php';
-    if (file_exists($fallback)) {
+if (!is_file($configfile)) {
+    $scriptfilename = filter_input(INPUT_SERVER, 'SCRIPT_FILENAME', FILTER_UNSAFE_RAW);
+    $resolvedscript = is_string($scriptfilename) ? realpath($scriptfilename) : false;
+    if ($resolvedscript !== false && $resolvedscript === realpath(__FILE__)) {
+        $fallbackroot = dirname($scriptfilename, 4);
+        $fallback = $fallbackroot . '/config.php';
+    }
+    if (isset($fallback) && is_file($fallback) && is_file($fallbackroot . '/lib/setup.php')) {
         $configfile = $fallback;
     }
+}
+if (!is_file($configfile)) {
+    http_response_code(500);
+    exit('Moodle configuration could not be located.');
 }
 require_once($configfile);
 require_once($CFG->libdir . '/questionlib.php');
@@ -42,14 +52,12 @@ use local_outcomemap\api\question_mappings;
 use local_outcomemap\api\validation_exception;
 use local_outcomemap\api\workflow;
 use qbank_outcomemap\form\bulk_map_form;
-
+use qbank_outcomemap\local\access;
 $cmid = optional_param('cmid', 0, PARAM_INT);
 $courseid = optional_param('courseid', 0, PARAM_INT);
 $returnurl = optional_param('returnurl', '', PARAM_LOCALURL);
 $questionids = optional_param('questionids', '', PARAM_SEQUENCE);
 $confirmed = optional_param('confirmed', 0, PARAM_BOOL);
-
-\core_question\local\bank\helper::require_plugin_enabled('qbank_outcomemap');
 
 if ($cmid) {
     [$module, $cm] = get_module_from_cmid($cmid);
@@ -61,8 +69,8 @@ if ($cmid) {
 } else {
     throw new moodle_exception('missingcourseorcmid', 'question');
 }
-require_capability('local/outcomemap:mapquestions', $thiscontext);
-
+\core_question\local\bank\helper::require_plugin_enabled('qbank_outcomemap');
+access::require_mapping_capabilities($thiscontext);
 // The question bank posts one q<id> parameter per selected question.
 if ($questionids === '') {
     $selected = [];
@@ -72,6 +80,9 @@ if ($questionids === '') {
         }
     }
     $questionids = implode(',', $selected);
+}
+if (strlen($questionids) > 20000) {
+    throw new invalid_parameter_exception(get_string('invalidbulkselection', 'qbank_outcomemap'));
 }
 $ids = array_values(array_unique(array_filter(array_map('intval', explode(',', $questionids)))));
 sort($ids);
@@ -87,10 +98,16 @@ $backurl = $returnurl !== ''
     ? new moodle_url($returnurl)
     : new moodle_url('/question/edit.php', $cmid ? ['cmid' => $cmid] : ['courseid' => $courseid]);
 if (!$ids) {
-    redirect($backurl, get_string('bulknoquestions', 'qbank_outcomemap'), null,
-        \core\output\notification::NOTIFY_WARNING);
+    redirect(
+        $backurl,
+        get_string('bulknoquestions', 'qbank_outcomemap'),
+        null,
+        \core\output\notification::NOTIFY_WARNING
+    );
 }
 
+// Re-authorize every posted question in its own exact question-bank context.
+access::require_bulk_question_access($ids);
 // This call resolves exact question versions, verifies every selected row, and
 // bulk-loads the available draft inventory without exposing local table access.
 $inventory = question_mappings::preview_bulk($ids, [
@@ -113,7 +130,7 @@ $customdata = [
     'questions' => $inventory->questions,
 ];
 
-/** Build the public operation array from a normal preview form submission. */
+// Build the public operation array from a normal preview form submission.
 $operationfromform = static function (\stdClass $data) use ($inventory): array {
     $operation = [
         'action' => (string) $data->operation,
@@ -143,24 +160,62 @@ $operationfromform = static function (\stdClass $data) use ($inventory): array {
     return $operation;
 };
 
-/** Build the immutable public operation array posted by the confirmation form. */
+// Build the immutable public operation array posted by the confirmation form.
 $operationfromconfirmation = static function (): array {
-    $weights = json_decode(optional_param('weightsjson', '[]', PARAM_RAW), true);
-    if (!is_array($weights)) {
-        $weights = [];
+    $action = required_param('operation', PARAM_ALPHAEXT);
+    $actions = [
+        question_mappings::BULK_ADD,
+        question_mappings::BULK_CHANGE_ROLE,
+        question_mappings::BULK_DELETE_DRAFTS,
+        question_mappings::BULK_SUBMIT_DRAFTS,
+    ];
+    if (!in_array($action, $actions, true)) {
+        throw new invalid_parameter_exception(get_string('invalidbulkoperation', 'qbank_outcomemap'));
+    }
+    $role = optional_param('role', '', PARAM_ALPHAEXT);
+    $roles = ['alignment_only', 'teaches', 'practices', 'assesses', 'remediates'];
+    if (
+        ($action === question_mappings::BULK_ADD || $action === question_mappings::BULK_CHANGE_ROLE)
+            && !in_array($role, $roles, true)
+    ) {
+        throw new invalid_parameter_exception(get_string('invalidmappingrole', 'local_outcomemap'));
+    }
+
+    $weightsjson = optional_param('weightsjson', '[]', PARAM_RAW_TRIMMED);
+    if (strlen($weightsjson) > 65536) {
+        throw new invalid_parameter_exception(get_string('invalidweightsjson', 'qbank_outcomemap'));
+    }
+    try {
+        $weights = json_decode($weightsjson, true, 2, JSON_THROW_ON_ERROR);
+    } catch (JsonException $e) {
+        throw new invalid_parameter_exception(get_string('invalidweightsjson', 'qbank_outcomemap'));
+    }
+    if (!is_array($weights) || count($weights) > 1000) {
+        throw new invalid_parameter_exception(get_string('invalidweightsjson', 'qbank_outcomemap'));
+    }
+    foreach ($weights as $id => $weight) {
+        $validid = filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($validid === false || !is_scalar($weight)) {
+            throw new invalid_parameter_exception(get_string('invalidweightsjson', 'qbank_outcomemap'));
+        }
+    }
+    $mappingids = optional_param('mappingids', '', PARAM_SEQUENCE);
+    if (strlen($mappingids) > 200000) {
+        throw new invalid_parameter_exception(get_string('invalidbulkselection', 'qbank_outcomemap'));
+    }
+    $mappingids = array_values(array_filter(array_map('intval', explode(',', $mappingids))));
+    if (count($mappingids) > 10000) {
+        throw new invalid_parameter_exception(get_string('invalidbulkselection', 'qbank_outcomemap'));
     }
     return [
-        'action' => required_param('operation', PARAM_ALPHAEXT),
-        'role' => optional_param('role', '', PARAM_ALPHAEXT),
+        'action' => $action,
+        'role' => $role,
         'outcomeversionuuid' => optional_param('outcomeversionuuid', '', PARAM_ALPHANUMEXT),
         'effectivefrom' => optional_param('effectivefrom', 0, PARAM_INT),
-        'mappingids' => array_values(array_filter(array_map(
-            'intval',
-            explode(',', optional_param('mappingids', '', PARAM_SEQUENCE))
-        ))),
+        'mappingids' => $mappingids,
         'weights' => $weights,
-        'notes' => optional_param('notes', '', PARAM_RAW),
-        'reason' => optional_param('reason', '', PARAM_RAW),
+        'notes' => optional_param('notes', '', PARAM_TEXT),
+        'reason' => optional_param('reason', '', PARAM_TEXT),
     ];
 };
 
@@ -171,6 +226,7 @@ $entryform = null;
 $confirmform = null;
 
 if ($confirmed) {
+    access::require_post_action();
     if (optional_param('cancel', 0, PARAM_BOOL)) {
         redirect($backurl);
     }
@@ -222,7 +278,7 @@ if ($preview && $preview->valid) {
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('bulkmapcount', 'qbank_outcomemap', count($ids)), 3);
 if ($notification !== null) {
-    echo $OUTPUT->notification($notification, $notificationtype, false);
+    echo $OUTPUT->notification(s($notification), $notificationtype, false);
 }
 
 if ($preview) {
@@ -247,8 +303,10 @@ if ($preview) {
                 ]);
             } else {
                 $previewkey = $action->operation;
-                if ($previewkey === question_mappings::BULK_SUBMIT_DRAFTS
-                        && !workflow::requires_independent_approval()) {
+                if (
+                    $previewkey === question_mappings::BULK_SUBMIT_DRAFTS
+                        && !workflow::requires_independent_approval()
+                ) {
                     $previewkey = 'finalize_drafts';
                 }
                 $actions[] = get_string('bulkpreview_' . $previewkey, 'qbank_outcomemap', (object) [
@@ -271,13 +329,16 @@ if ($preview) {
     }
     echo html_writer::table($table);
     foreach ($preview->errors as $error) {
-        echo $OUTPUT->notification($error, \core\output\notification::NOTIFY_ERROR, false);
+        echo $OUTPUT->notification(s($error), \core\output\notification::NOTIFY_ERROR, false);
     }
 }
 
 if ($confirmform) {
-    echo $OUTPUT->notification(get_string('bulkpreviewvalid', 'qbank_outcomemap'),
-        \core\output\notification::NOTIFY_SUCCESS, false);
+    echo $OUTPUT->notification(
+        get_string('bulkpreviewvalid', 'qbank_outcomemap'),
+        \core\output\notification::NOTIFY_SUCCESS,
+        false
+    );
     $confirmform->display();
 } else if ($entryform) {
     $entryform->display();

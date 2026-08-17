@@ -25,10 +25,10 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'qbank_outcomemap';
-$plugin->version = 2026072800;
+$plugin->version = 2026081700;
 $plugin->requires = 2024100700; // Moodle 4.5 minimum; validated against Moodle 5.2.
 $plugin->maturity = MATURITY_BETA;
-$plugin->release = '0.8.0';
+$plugin->release = '0.8.1';
 $plugin->dependencies = [
-    'local_outcomemap' => 2026072704,
+    'local_outcomemap' => 2026081700,
 ];

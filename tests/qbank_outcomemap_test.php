@@ -31,7 +31,7 @@ use qbank_outcomemap\local\bank\outcome_condition;
 use qbank_outcomemap\local\bank\outcome_map_action;
 use qbank_outcomemap\local\bank\role_condition;
 use qbank_outcomemap\local\bank\status_condition;
-
+use qbank_outcomemap\local\access;
 /**
  * Tests for the outcome mapping question bank integration.
  *
@@ -96,8 +96,13 @@ final class qbank_outcomemap_test extends \advanced_testcase {
             'statement' => 'Outcome ' . $code,
             'effectivefrom' => self::EFFECTIVEFROM,
         ]);
-        $itemver = $DB->get_record_select('local_outcomemap_itemver', 'itemid = :itemid',
-            ['itemid' => $itemid], '*', MUST_EXIST);
+        $itemver = $DB->get_record_select(
+            'local_outcomemap_itemver',
+            'itemid = :itemid',
+            ['itemid' => $itemid],
+            '*',
+            MUST_EXIST
+        );
         outcome_service::submit_for_review((int) $itemver->id);
         if (\local_outcomemap\api\workflow::requires_independent_approval()) {
             $this->setUser($reviewer);
@@ -198,7 +203,11 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         [$course, $qbank] = $this->create_question_scope();
         $view = $this->create_view($course, $qbank);
         $feature = new class extends plugin_feature {
-            /** Simulate a missing or incomplete required local_outcomemap installation. */
+            /**
+             * Simulate a missing or incomplete required local_outcomemap installation.
+             *
+             * @return bool
+             */
             protected function dependency_available(): bool {
                 return false;
             }
@@ -224,9 +233,11 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $this->assertFileDoesNotExist(__DIR__ . '/../db/install.xml');
         $this->assertFileDoesNotExist(__DIR__ . '/../db/access.php');
         $version = file_get_contents(__DIR__ . '/../version.php');
-        $this->assertStringContainsString("'local_outcomemap' => 2026072704", $version);
-        $this->assertTrue(class_exists(question_mappings::class),
-            'The pinned public local_outcomemap service dependency must be available.');
+        $this->assertStringContainsString("'local_outcomemap' => 2026081700", $version);
+        $this->assertTrue(
+            class_exists(question_mappings::class),
+            'The pinned public local_outcomemap service dependency must be available.'
+        );
     }
 
     /**
@@ -252,7 +263,8 @@ final class qbank_outcomemap_test extends \advanced_testcase {
             'id' => $DB->get_field_sql(
                 'SELECT qbe.questioncategoryid FROM {question_versions} qv
                    JOIN {question_bank_entries} qbe ON qbe.id = qv.questionbankentryid
-                  WHERE qv.id = :id', ['id' => $question->versionid]
+                  WHERE qv.id = :id',
+                ['id' => $question->versionid]
             ),
         ], '*', MUST_EXIST);
         $unmapped = $generator->create_question('shortanswer', null, ['category' => $category->id]);
@@ -316,7 +328,9 @@ final class qbank_outcomemap_test extends \advanced_testcase {
             'questionid' => 11,
             'mappingid' => 0,
             'returnurl' => '',
-            'outcomes' => ['' => get_string('choosedots'), 'outcome-uuid' => 'QBFW.CLO1 v1'],
+            'outcomes' => [
+                '' => get_string('choosedots'), 'outcome-uuid' => 'QBFW.CLO1 v1', 'unsafe-uuid' => '<img src=x onerror=alert(1)>',
+            ],
         ]);
         ob_start();
         $mappingform->display();
@@ -331,14 +345,15 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $this->assertStringContainsString(get_string('assessedweight', 'qbank_outcomemap'), $mappinghtml);
         $this->assertStringContainsString(get_string('reviewmessage', 'qbank_outcomemap'), $mappinghtml);
         $this->assertStringContainsString(get_string('savedraft', 'qbank_outcomemap'), $mappinghtml);
-
+        $this->assertStringNotContainsString('<img src=x onerror=alert(1)>', $mappinghtml);
+        $this->assertStringContainsString('&lt;img src=x onerror=alert(1)&gt;', $mappinghtml);
         $question = (object) [
             'questionid' => 11,
             'name' => 'Accessible question',
             'questionversion' => 1,
             'drafts' => [(object) [
                 'id' => 22,
-                'outcome' => 'QBFW.CLO1 v1',
+                'outcome' => '<img src=x onerror=alert(2)>',
                 'role' => 'alignment_only',
             ]],
         ];
@@ -347,8 +362,9 @@ final class qbank_outcomemap_test extends \advanced_testcase {
             'cmid' => 0,
             'courseid' => 2,
             'returnurl' => '',
-            'outcomes' => ['' => get_string('choosedots'), 'outcome-uuid' => 'QBFW.CLO1 v1'],
-            'questions' => [$question],
+            'outcomes' => [
+                '' => get_string('choosedots'), 'outcome-uuid' => 'QBFW.CLO1 v1', 'unsafe-uuid' => '<svg onload=alert(1)>',
+            ], 'questions' => [$question],
         ]);
         ob_start();
         $bulkform->display();
@@ -358,7 +374,10 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $this->assertStringContainsString('for="id_questionweight_11"', $bulkhtml);
         $this->assertStringContainsString('Accessible question, version 1', $bulkhtml);
         $this->assertStringContainsString(get_string('bulkpreview', 'qbank_outcomemap'), $bulkhtml);
-
+        $this->assertStringNotContainsString('<svg onload=alert(1)>', $bulkhtml);
+        $this->assertStringContainsString('&lt;svg onload=alert(1)&gt;', $bulkhtml);
+        $this->assertStringNotContainsString('<img src=x onerror=alert(2)>', $bulkhtml);
+        $this->assertStringContainsString('&lt;img src=x onerror=alert(2)&gt;', $bulkhtml);
         // A hidden draft ID must remain bound to the server-selected exact-version draft.
         $editform = new \qbank_outcomemap\form\mapping_form(null, [
             'questionid' => 11,
@@ -375,11 +394,16 @@ final class qbank_outcomemap_test extends \advanced_testcase {
             'notes' => 'Unrelated edit',
             'reviewmessage' => '',
         ], []);
-        $this->assertSame(
-            get_string('invalidmappingedit', 'qbank_outcomemap'),
-            $errors['outcomeversionuuid']
-        );
-
+        $this->assertSame(get_string('invalidmappingedit', 'qbank_outcomemap'), $errors['outcomeversionuuid']);
+        $invalidroleerrors = $editform->validation([
+            'id' => 11,
+            'mappingid' => 22,
+            'outcomeversionuuid' => 'outcome-uuid',
+            'role' => '<img src=x onerror=alert(1)>',
+            'weight' => '1',
+        ], []);
+        $this->assertSame(get_string('invalidmappingrole', 'local_outcomemap'), $invalidroleerrors['role']);
+        $this->assertStringNotContainsString('<img', implode(' ', $invalidroleerrors));
         // Approval-disabled forms must use finalization terminology exclusively.
         set_config('requireapproval', 0, 'local_outcomemap');
         $finalmappingform = new \qbank_outcomemap\form\mapping_form(null, [
@@ -478,10 +502,16 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $largereads = $DB->perf_get_reads() - $before;
 
         $this->assertGreaterThan(0, $smallreads);
-        $this->assertLessThanOrEqual($smallreads + 1, $largereads,
-            'Loading 50 mapped rows must use the same query shape as loading one mapped row.');
-        $this->assertLessThanOrEqual(8, $largereads,
-            'Mapping retrieval must remain bounded for a 50-question visible page.');
+        $this->assertLessThanOrEqual(
+            $smallreads + 1,
+            $largereads,
+            'Loading 50 mapped rows must use the same query shape as loading one mapped row.'
+        );
+        $this->assertLessThanOrEqual(
+            8,
+            $largereads,
+            'Mapping retrieval must remain bounded for a 50-question visible page.'
+        );
     }
 
     /**
@@ -509,7 +539,7 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $this->setAdminUser();
         [$course, $qbank] = $this->create_question_scope();
         $view = $this->create_view($course, $qbank);
-        $column = new class($view) extends outcome_column {
+        $column = new class ($view) extends outcome_column {
             /** @var int[][] Captured question-version ID batches. */
             public array $batches = [];
 
@@ -589,8 +619,12 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         ]);
         // Mark the alignment draft as copied provenance for the copied-pending filter.
         $DB->set_field('local_outcomemap_qmap', 'sourceqmapid', $alignmentid, ['id' => $alignmentid]);
-        $DB->set_field('local_outcomemap_qmap', 'sourcequestionversionid', $question->versionid,
-            ['id' => $alignmentid]);
+        $DB->set_field(
+            'local_outcomemap_qmap',
+            'sourcequestionversionid',
+            $question->versionid,
+            ['id' => $alignmentid]
+        );
 
         $run = function (string $condition, array $filter) use ($DB): array {
             [$where, $params] = $condition::build_query_from_filter($filter);
@@ -604,20 +638,34 @@ final class qbank_outcomemap_test extends \advanced_testcase {
 
         $any = \core\output\datafilter::JOINTYPE_ANY;
         $none = \core\output\datafilter::JOINTYPE_NONE;
-        $this->assertContains((int) $question->id,
-            $run(outcome_condition::class, ['values' => ['CLO7'], 'jointype' => $any]));
-        $this->assertContains((int) $question->id,
-            $run(outcome_condition::class, ['values' => ['Question bank outcomes'], 'jointype' => $any]));
-        $this->assertNotContains((int) $question->id,
-            $run(outcome_condition::class, ['values' => ['CLO7'], 'jointype' => $none]));
-        $this->assertNotContains((int) $question->id,
-            $run(outcome_condition::class, ['values' => ['NOSUCHCODE'], 'jointype' => $any]));
-        $this->assertContains((int) $question->id,
-            $run(role_condition::class, ['values' => ['assesses'], 'jointype' => $any]));
-        $this->assertContains((int) $question->id,
-            $run(role_condition::class, ['values' => ['remediates'], 'jointype' => $any]));
-        $this->assertContains((int) $question->id,
-            $run(status_condition::class, ['values' => ['draft'], 'jointype' => $any]));
+        $this->assertContains(
+            (int) $question->id,
+            $run(outcome_condition::class, ['values' => ['CLO7'], 'jointype' => $any])
+        );
+        $this->assertContains(
+            (int) $question->id,
+            $run(outcome_condition::class, ['values' => ['Question bank outcomes'], 'jointype' => $any])
+        );
+        $this->assertNotContains(
+            (int) $question->id,
+            $run(outcome_condition::class, ['values' => ['CLO7'], 'jointype' => $none])
+        );
+        $this->assertNotContains(
+            (int) $question->id,
+            $run(outcome_condition::class, ['values' => ['NOSUCHCODE'], 'jointype' => $any])
+        );
+        $this->assertContains(
+            (int) $question->id,
+            $run(role_condition::class, ['values' => ['assesses'], 'jointype' => $any])
+        );
+        $this->assertContains(
+            (int) $question->id,
+            $run(role_condition::class, ['values' => ['remediates'], 'jointype' => $any])
+        );
+        $this->assertContains(
+            (int) $question->id,
+            $run(status_condition::class, ['values' => ['draft'], 'jointype' => $any])
+        );
         $this->assertContains((int) $question->id, $run(mapped_condition::class, ['values' => [1]]));
         $this->assertNotContains((int) $question->id, $run(mapped_condition::class, ['values' => [0]]));
         $this->assertContains((int) $unmapped->id, $run(mapped_condition::class, ['values' => [0]]));
@@ -625,17 +673,30 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $this->assertContains((int) $question->id, $run(invalid_weight_condition::class, ['values' => [1]]));
         $this->assertContains((int) $question->id, $run(copied_condition::class, ['values' => [1]]));
 
-        foreach ([
+        foreach (
+            [
             outcome_condition::class,
             role_condition::class,
             status_condition::class,
             mapped_condition::class,
             invalid_weight_condition::class,
             copied_condition::class,
-        ] as $condition) {
+            ] as $condition
+        ) {
             $this->assertSame(['', []], $condition::build_query_from_filter(['values' => []]));
         }
 
+        $longterms = [];
+        for ($index = 0; $index < 25; $index++) {
+            $longterms[] = str_pad((string) $index, 150, 'x');
+        }
+        [, $boundedparams] = outcome_condition::build_query_from_filter([
+            'values' => $longterms, 'jointype' => $any,
+        ]);
+        $this->assertCount(100, $boundedparams, 'Twenty terms expand to five bounded LIKE parameters each.');
+        foreach ($boundedparams as $value) {
+            $this->assertLessThanOrEqual(102, \core_text::strlen($value));
+        }
         $this->setUser($this->getDataGenerator()->create_user());
         $this->assertSame(['1 = 0', []], mapped_condition::build_query_from_filter(['values' => [1]]));
     }
@@ -863,6 +924,65 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         $this->assertSame([], $feature->get_question_actions($view));
         $this->assertSame([], $feature->get_question_filters($view));
         $this->assertSame([], $feature->get_bulk_actions($view));
+    }
+
+    /**
+     * Tests direct endpoint guards require read, map, and core question access for every selection.
+     */
+    public function test_direct_access_guards_fail_closed_for_tampered_contexts(): void {
+        $this->resetAfterTest(true);
+        [, $allowedqbank, $allowedquestion] = $this->create_question_scope();
+        [, , $deniedquestion] = $this->create_question_scope();
+        $allowedcontext = \context_module::instance($allowedqbank->cmid);
+        $user = $this->getDataGenerator()->create_user();
+        $roleid = create_role('Direct question mapper', 'directquestionmapper', '');
+        foreach (['local/outcomemap:mapquestions', 'moodle/question:editall'] as $capability) {
+            assign_capability($capability, CAP_ALLOW, $roleid, $allowedcontext->id, true);
+        }
+        role_assign($roleid, $user->id, $allowedcontext->id);
+        $this->setUser($user);
+        $denied = false;
+        try {
+            access::require_question_edit_access($allowedcontext, (int) $allowedquestion->id);
+        } catch (\required_capability_exception $e) {
+            $denied = true;
+        }
+        $this->assertTrue($denied, 'Mapping permission alone must not expose governed definitions.');
+        assign_capability('local/outcomemap:viewdefinitions', CAP_ALLOW, $roleid, $allowedcontext->id, true);
+        $this->setUser($user);
+        access::require_question_edit_access($allowedcontext, (int) $allowedquestion->id);
+        access::require_bulk_question_access([(int) $allowedquestion->id]);
+        $denied = false;
+        try {
+            access::require_bulk_question_access([
+                (int) $allowedquestion->id, (int) $deniedquestion->id,
+            ]);
+        } catch (\required_capability_exception $e) {
+            $denied = true;
+        }
+        $this->assertTrue($denied, 'A tampered bulk selection must be checked in every question context.');
+    }
+
+    /**
+     * Tests write actions cannot be triggered by a GET request carrying a valid sesskey.
+     */
+    public function test_write_action_guard_requires_post_data(): void {
+        $originalpost = $_POST;
+        try {
+            $_POST = [];
+            $denied = false;
+            try {
+                access::require_post_action();
+            } catch (\moodle_exception $e) {
+                $denied = $e->errorcode === 'postrequired';
+            }
+            $this->assertTrue($denied);
+            $_POST = ['sesskey' => sesskey()];
+            access::require_post_action();
+            $this->addToAssertionCount(1);
+        } finally {
+            $_POST = $originalpost;
+        }
     }
 
     /**

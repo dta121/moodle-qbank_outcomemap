@@ -1,4 +1,4 @@
-# qbank_outcomemap 0.7.x release checklist
+# qbank_outcomemap 0.8.x release checklist
 
 Complete this together with the [`local_outcomemap` release checklist](https://github.com/dta121/moodle-local_outcomemap/blob/main/docs/RELEASE_CHECKLIST.md). The local plugin is the system of record and must be released first.
 
@@ -33,9 +33,11 @@ Complete this together with the [`local_outcomemap` release checklist](https://g
 - [ ] Column and filters are hidden without `local/outcomemap:viewdefinitions`.
 - [ ] Editor and bulk controls require `viewdefinitions`, `mapquestions`, and applicable Moodle question capabilities.
 - [ ] Direct editor/bulk requests and public filter boundaries reject unauthorized users.
+- [ ] Every bulk-selected question is re-authorized in its own exact question-bank context.
 - [ ] Question mappings bind to `question_versions.id`; older mappings remain historical.
 - [ ] New-version copies are drafts and require explicit review.
-- [ ] Submit/Delete use POST and sesskeys; deletion requires confirmation.
+- [ ] Create/update, submit, delete, copy, and bulk commit use POST and sesskeys; deletion requires confirmation.
+- [ ] Posted outcome UUIDs are revalidated against the authoritative context and effective timestamp.
 - [ ] The local approval queue enforces creator/reviewer separation when configured.
 
 ## 5. Weight and bulk safety
@@ -43,7 +45,7 @@ Complete this together with the [`local_outcomemap` release checklist](https://g
 - [ ] `assesses` mappings require explicit positive weights and exact approved total `1.0000000000`.
 - [ ] Non-assessed roles reject evidence weights.
 - [ ] Multi-outcome weights are never inferred or assigned equally.
-- [ ] Bulk mapping creates only `alignment_only` drafts and never assigns assessed weights.
+- [ ] Bulk assessed mappings require explicit per-question/per-mapping weights and a successful atomic preview.
 - [ ] Bulk batches are bounded at 1,000 IDs and reject/skip unauthorized or invalid questions safely.
 
 ## 6. Performance and ownership boundary
@@ -51,6 +53,7 @@ Complete this together with the [`local_outcomemap` release checklist](https://g
 - [ ] Visible question mappings are loaded in bounded page batches, never once per row.
 - [ ] Bulk core metadata and existing mappings use a fixed query budget; the 25-question regression remains within the approved bound.
 - [ ] Filters use parameterized SQL returned through the public local API.
+- [ ] Free-text filters bound the number and length of terms before expanding SQL predicates.
 - [ ] A repository search confirms no direct governed-table access.
 - [ ] The qbank plugin owns no mapping/evidence/result state and its Privacy API provider remains null.
 
