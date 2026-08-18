@@ -27,12 +27,12 @@ use core\output\datafilter;
  */
 abstract class binary_mapping_condition extends mapping_condition {
     /**
-     * Return the core binary filter class.
+     * Return the cross-version binary filter class.
      *
      * @return string
      */
     public function get_filter_class() {
-        return 'core/datafilter/filtertypes/binary';
+        return 'qbank_outcomemap/datafilter/filtertypes/binary';
     }
 
     /**

@@ -184,6 +184,10 @@ final class qbank_outcomemap_test extends \advanced_testcase {
         ]);
         $this->assertContains('needs_review', $statusparams);
         $this->assertInstanceOf(mapped_condition::class, $filters[3]);
+        $this->assertSame(
+            'qbank_outcomemap/datafilter/filtertypes/binary',
+            $filters[3]->get_filter_class()
+        );
         $this->assertInstanceOf(invalid_weight_condition::class, $filters[4]);
         $this->assertInstanceOf(copied_condition::class, $filters[5]);
 
