@@ -65,6 +65,9 @@ abstract class mapping_condition extends condition {
      *
      * Moodle's generic data-filter control converts option values to integers.
      * Finite string-valued filters override this method to restore their canonical values.
+     *
+     * @param array $filter Core filter data.
+     * @return array Normalized filter data.
      */
     protected static function normalize_filter(array $filter): array {
         return $filter;
