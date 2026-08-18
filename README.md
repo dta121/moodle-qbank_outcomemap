@@ -1,5 +1,7 @@
 # Moodle Question Bank Outcome Mapping
 
+[![Moodle Plugin CI](https://github.com/dta121/moodle-qbank_outcomemap/actions/workflows/moodle-plugin-ci.yml/badge.svg)](https://github.com/dta121/moodle-qbank_outcomemap/actions/workflows/moodle-plugin-ci.yml)
+
 `qbank_outcomemap` adds accessible question-bank interfaces for mapping exact Moodle question versions to governed learning outcomes. It is a thin companion to [`local_outcomemap`](https://github.com/dta121/moodle-local_outcomemap), which remains the system of record for definitions, mappings, evidence, calculations, audit, privacy, backup/restore, and reports.
 
 Current release: **0.8.1 beta** (`2026081700`).
