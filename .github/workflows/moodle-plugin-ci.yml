@@ -81,11 +81,21 @@ jobs:
           sudo locale-gen en_AU.UTF-8
           echo "NVM_DIR=$HOME/.nvm" >> "$GITHUB_ENV"
 
-      - name: Queue the required local_outcomemap plugin
-        run: moodle-plugin-ci add-plugin --branch main dta121/moodle-local_outcomemap
+      - name: Check out the required local_outcomemap plugin
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: dta121/moodle-local_outcomemap
+          ref: main
+          path: moodle-plugin-ci-plugins/moodle-local_outcomemap
+          ssh-key: ${{ secrets.LOCAL_OUTCOMEMAP_DEPLOY_KEY }}
+          persist-credentials: false
 
       - name: Install Moodle and the plugins
-        run: moodle-plugin-ci install --plugin ./plugin --db-host=127.0.0.1
+        run: >-
+          moodle-plugin-ci install
+          --plugin ./plugin
+          --extra-plugins ./moodle-plugin-ci-plugins
+          --db-host=127.0.0.1
         env:
           DB: ${{ matrix.database }}
           MOODLE_BRANCH: ${{ matrix.moodle-branch }}
