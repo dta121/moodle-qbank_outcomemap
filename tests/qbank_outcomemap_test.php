@@ -35,6 +35,7 @@ use qbank_outcomemap\local\access;
 /**
  * Tests for the outcome mapping question bank integration.
  *
+ * @coversNothing
  * @package    qbank_outcomemap
  * @copyright  2026 Moodle Learning Outcome Mapping contributors
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
